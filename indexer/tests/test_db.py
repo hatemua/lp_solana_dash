@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from indexer import models as M
-from indexer.db import Database, split_sql, upsert_sql
+from indexer.db import Database, ordered_rows, split_sql, upsert_sql
 from indexer.redis_store import pool_hash
 
 
@@ -25,6 +25,15 @@ def test_upsert_sql_tokens_basic_does_not_touch_jupiter_fields() -> None:
 
 def test_upsert_sql_json_cast() -> None:
     assert "CAST(:audit AS JSONB)" in upsert_sql("tokens_jupiter", ["mint", "audit"])
+
+
+def test_ordered_rows_sorts_and_dedupes_by_pk() -> None:
+    rows = [{"address": "b", "tvl": 1}, {"address": "a", "tvl": 2}, {"address": "b", "tvl": 3}]
+    out = ordered_rows("pools", rows)
+    assert [r["address"] for r in out] == ["a", "b"]
+    assert out[1]["tvl"] == 3                                    # last value wins
+    ts_rows = [{"pool": "p", "ts": 2}, {"pool": "p", "ts": 1}]
+    assert [r["ts"] for r in ordered_rows("pool_stats", ts_rows)] == [1, 2]
 
 
 def test_split_sql_keeps_do_block() -> None:

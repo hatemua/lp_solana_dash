@@ -63,7 +63,7 @@ class Database:
         log.info("database schema ready")
 
     async def upsert(self, kind: str, rows: Iterable[dict[str, Any]], chunk: int = 500) -> int:
-        rows = [r for r in rows if r]
+        rows = ordered_rows(kind, rows)
         if not rows:
             return 0
         n = 0
@@ -87,6 +87,20 @@ class Database:
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+
+def ordered_rows(kind: str, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate by primary key (last wins) and sort by it.
+
+    Writers that upsert overlapping rows (e.g. hot_stats and full_pool_list both touch `pools`) then lock them in
+    the same order, which prevents deadlocks; and one INSERT never updates the same row twice (Postgres rejects it).
+    """
+    pk = TABLES[kind][0]
+    by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for r in rows:
+        if r:
+            by_key[tuple(r.get(k) for k in pk)] = r
+    return [by_key[k] for k in sorted(by_key, key=lambda t: tuple(str(x) for x in t))]
 
 
 def split_sql(sql: str) -> list[str]:
