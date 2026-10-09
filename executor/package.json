@@ -1,0 +1,29 @@
+{
+  "name": "lp-executor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Meteora DLMM SDK service (localhost only). M1: read-only pool bins.",
+  "type": "module",
+  "main": "dist/server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@meteora-ag/dlmm": "^1.7.5",
+    "@solana/web3.js": "^1.98.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.17.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0"
+  }
+}
