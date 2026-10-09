@@ -262,7 +262,22 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     # ------------------------------------------------------------------ wallet LP (non-custodial)
     @app.get("/v1/wallet/{owner}/positions")
     async def positions(owner: str = Path(..., pattern=ADDR)) -> Any:
-        return await executor("GET", f"/v1/users/{owner}/positions")
+        """The wallet's DLMM positions (read on-chain by the executor), valued with our token prices."""
+        d = await executor("GET", f"/v1/users/{owner}/positions")
+        pos = d.get("positions") or []
+        mints = sorted({m for p in pos for m in (p.get("tokenX"), p.get("tokenY")) if m})
+        pools_ = sorted({p["pool"] for p in pos})
+        prices = {r["mint"]: r["price_usd"] for r in await rows(
+            "SELECT mint, price_usd FROM tokens WHERE mint = ANY(:m)", m=mints)} if mints else {}
+        names = {r["address"]: r["name"] for r in await rows(
+            "SELECT address, name FROM pools WHERE address = ANY(:a)", a=pools_)} if pools_ else {}
+        for p in pos:
+            px, py = prices.get(p.get("tokenX")), prices.get(p.get("tokenY"))
+            known = px is not None and py is not None
+            p["name"] = names.get(p["pool"])
+            p["valueUsd"] = p["amountX"] * px + p["amountY"] * py if known else None
+            p["feesUsd"] = p["feeX"] * px + p["feeY"] * py if known else None
+        return {"owner": owner, "positions": pos}
 
     @app.post("/v1/tx/{pool}/add-liquidity")
     async def add_liquidity(body: AddLiquidityBody, pool: str = Path(..., pattern=ADDR)) -> Any:
