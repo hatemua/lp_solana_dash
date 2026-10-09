@@ -83,8 +83,8 @@ WITH latest AS (
            (t.stats->'stats5m'->>'priceChange')::float AS price_change_5m,
            (t.stats->'stats1h'->>'priceChange')::float AS price_change_1h,
            (t.stats->'stats24h'->>'priceChange')::float AS price_change_24h,
-           EXTRACT(EPOCH FROM now() - p.created_at) / 3600 AS pool_age_h,
-           EXTRACT(EPOCH FROM now() - t.created_at) / 3600 AS token_age_h,
+           (EXTRACT(EPOCH FROM now() - p.created_at) / 3600)::float AS pool_age_h,
+           (EXTRACT(EPOCH FROM now() - t.created_at) / 3600)::float AS token_age_h,
            l.volume_1h / NULLIF(l.volume_24h / 24, 0) AS volume_burst,
            s.lp_score
     FROM latest l
@@ -117,7 +117,8 @@ def build_query(args: dict[str, Any], max_age_min: int = 20) -> Query:
         sort = PRESETS[preset]["sort"]
     merged.update(args)                         # explicit params override the preset
 
-    where, params = [], {}
+    where: list[str] = []
+    params: dict[str, Any] = {}
     q = merged.pop("q", None)
     sort = merged.pop("sort", None) or sort or "fee_tvl_1h"
     order = str(merged.pop("order", "desc")).lower()

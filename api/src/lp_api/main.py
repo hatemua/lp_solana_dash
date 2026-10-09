@@ -164,8 +164,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         out["live"] = live or None
         out["tokens"] = await rows("SELECT * FROM tokens WHERE mint IN (:x, :y)",
                                    x=out.get("token_x"), y=out.get("token_y"))
-        metrics = await rows("SELECT ts, lp_score, metrics FROM pool_metrics_1m WHERE pool = :a ORDER BY ts DESC LIMIT 1",
-                             a=address)
+        metrics = await rows("SELECT ts, lp_score, metrics FROM pool_metrics_1m WHERE pool = :a "
+                             "ORDER BY ts DESC LIMIT 1", a=address)
         out["signal"] = metrics[0] if metrics else None
         return out
 
@@ -213,12 +213,14 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         t = await rows("SELECT * FROM tokens WHERE mint = :m", m=mint)
         if not t:
             raise HTTPException(404, "token not found")
-        pools_ = await rows("SELECT address, name, bin_step, base_fee_pct, tvl, volume_24h, fees_24h, is_hot FROM pools "
-                            "WHERE token_x = :m OR token_y = :m ORDER BY tvl DESC NULLS LAST LIMIT 50", m=mint)
+        pools_ = await rows("SELECT address, name, bin_step, base_fee_pct, tvl, volume_24h, fees_24h, is_hot "
+                            "FROM pools WHERE token_x = :m OR token_y = :m ORDER BY tvl DESC NULLS LAST LIMIT 50",
+                            m=mint)
         return {**t[0], "pools": pools_}
 
     @app.get("/v1/tokens/{mint}/ohlcv")
-    async def token_ohlcv(mint: str = Path(..., pattern=ADDR), minutes: int = Query(120, ge=5, le=1440)) -> dict[str, Any]:
+    async def token_ohlcv(mint: str = Path(..., pattern=ADDR),
+                          minutes: int = Query(120, ge=5, le=1440)) -> dict[str, Any]:
         sql = ("SELECT ts, open, high, low, close, volume FROM token_ohlcv_1m WHERE mint = :m "
                "AND ts > now() - make_interval(mins => :n) ORDER BY ts")
         return {"mint": mint, "data": await rows(sql, m=mint, n=minutes)}
@@ -242,7 +244,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                         top = await redis.zrevrange("rank:fees_1h", 0, 49)
                         pipe = redis.pipeline(transaction=False)
                         for a in top:
-                            pipe.hgetall(f"pool:{a}")
+                            pipe.hgetall("pool:" + (a.decode() if isinstance(a, bytes) else str(a)))
                         payload = {"ts": last, "pools": [h for h in await pipe.execute() if h]}
                         yield f"event: hot\ndata: {json.dumps(payload)}\n\n"
                     await asyncio.sleep(0.2)

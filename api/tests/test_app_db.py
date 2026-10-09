@@ -38,8 +38,9 @@ async def _seed() -> None:
             "ON CONFLICT (mint) DO NOTHING", MINT, now - timedelta(days=10))
         for i in range(3):
             await conn.execute(
-                "INSERT INTO pool_stats (pool, ts, price, tvl, volume_1h, volume_24h, fees_1h, fee_tvl_1h, fee_tvl_24h) "
-                "VALUES ($1, $2, 0.001, 120000, 90000, 480000, 1800, 0.015, 0.09)", POOL, now - timedelta(minutes=i))
+                "INSERT INTO pool_stats (pool, ts, price, tvl, volume_1h, volume_24h, fees_1h, fee_tvl_1h, "
+                "fee_tvl_24h) VALUES ($1, $2, 0.001, 120000, 90000, 480000, 1800, 0.015, 0.09)",
+                POOL, now - timedelta(minutes=i))
         for i in range(12):
             await conn.execute(
                 "INSERT INTO pool_ohlcv_5m (pool, ts, open, high, low, close, volume, fees) VALUES "
@@ -75,6 +76,7 @@ def test_pools_filter_and_speed(client) -> None:  # type: ignore[no-untyped-def]
     row = next(d for d in body["data"] if d["address"] == POOL)
     assert row["token_symbol"] == "TEST" and row["token_volume_5m"] == 600000
     assert row["mint_disabled"] is True and row["top10_pct"] == 20
+    assert isinstance(row["token_age_h"], float) and isinstance(row["pool_age_h"], float)   # numbers, not strings
     assert 9 < row["token_age_h"] / 24 < 11
 
 
