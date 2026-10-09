@@ -1,0 +1,29 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*keypair*.json
+id.json
+wallet*.json
+secrets/
+# deps / builds
+node_modules/
+.next/
+out/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+coverage/
+# data / logs
+*.log
+data/
+*.sqlite
+*.db
+.DS_Store
