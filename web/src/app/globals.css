@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg text-slate-200 antialiased;
+  font-feature-settings: "tnum";
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.card {
+  @apply rounded-lg border border-line bg-panel;
+}
+
+.btn {
+  @apply rounded-md border border-line bg-panel px-3 py-1.5 text-sm hover:border-acc disabled:opacity-40;
+}
+
+.btn-primary {
+  @apply rounded-md bg-acc px-3 py-1.5 text-sm font-medium text-bg hover:brightness-110 disabled:opacity-40;
+}
+
+.input {
+  @apply w-full rounded-md border border-line bg-bg px-2 py-1 text-sm outline-none focus:border-acc;
+}
+
+.label {
+  @apply text-xs text-mut;
+}
+
+.wallet-adapter-button-trigger {
+  height: 34px !important;
+  font-size: 14px !important;
+}
