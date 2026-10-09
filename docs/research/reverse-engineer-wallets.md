@@ -72,3 +72,13 @@ Earlier tables used the median trade; the **average** trade (equal size, pnl inc
 
 - On-chain check (3Zhq, token FLY): the extra tokens come from **Meteora DLMM** (`LBUZKh…` program, pool `4Hxjd3…`): add SOL liquidity, remove liquidity (tokens come back), re-add, every 1–5 minutes, then sell the tokens via Jupiter. These wallets are **active DLMM LPs**; the tracker counts LP withdrawals as free tokens (no cost), so their reported profit is inflated. Summing the SOL flows of the visible FLY transactions gives roughly −0.13 SOL, while the tracker shows +$59 realized on $41.
 - Real buy→sell trading by these wallets ≈ break-even. Their actual method = Meteora DLMM LP with frequent re-centering → test it with the LP Shadow (`ideas/lp-shadow-prompt.md`) and measure their true P&L from SOL flows.
+
+## Real P&L from on-chain SOL flows (public RPC, ~40–47 h, 2026-10-07/09; fetch stopped at the time limit)
+| Wallet | tx | DLMM tx | net SOL over window | max SOL deployed at once | note |
+|---|---|---|---|---|---|
+| 2WMJ | 184 | 104 | −0.16 SOL (≈ −$18 / 44 h) | 4.5 SOL | ≈ flat |
+| 3Zhq | 357 | 250 | +3.27 SOL, but includes a +10 SOL plain transfer in | 5.2 SOL | unclear (≈ −6.7 SOL without the deposit, unless it sits in open positions) |
+| AQPh | 175 | 141 | +3.15 SOL (≈ +$350 / 40 h) | 13.3 SOL | positive |
+| SF2Q | 358 | 305 | +1.07 SOL (≈ +$118 / 47 h) | 0.5 SOL (positions opened before the window) | positive |
+- Limits: LP positions open at the start/end of the window are not valued (needs the DLMM SDK position value), so each number can be off by the size of one position. syfp only 7 h fetched (mostly USDC trading) — skipped.
+- Read: the LP wallets are roughly flat to modestly positive in real SOL terms over 2 days — far below the tracker's numbers, but not losing. M4 of the build prompt (SDK position values + flows) gives the exact equity curve.
