@@ -186,8 +186,8 @@ class Indexer:
                 tokens[t["mint"]] = t
         await self.db.upsert("tokens_basic", tokens.values())
         n = await self.db.upsert("pools", [M.pool_row(p, now) for p in d["data"] if p.get("address")])
-        newest = max((M.fnum(p.get("created_at")) or 0 for p in d["data"]), default=0)
-        self._info("new_pools", upserted=n, newest_created_at=M.ts_from_ms(newest).isoformat() if newest else None)
+        newest = M.ts_from_ms(max((M.fnum(p.get("created_at")) or 0 for p in d["data"]), default=0))
+        self._info("new_pools", upserted=n, newest_created_at=newest.isoformat() if newest else None)
 
     async def token_info_job(self) -> None:
         """Jupiter token info (holders, mcap, organic score, audit, stats) for the tokens of hot pools."""

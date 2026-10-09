@@ -2,7 +2,7 @@
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 from redis.asyncio import Redis
 
@@ -44,7 +44,7 @@ class RedisStore:
         addrs = []
         for pool, stat, symbols in items:
             key = f"pool:{pool['address']}"
-            pipe.hset(key, mapping=pool_hash(pool, stat, symbols))
+            pipe.hset(key, mapping=cast(Any, pool_hash(pool, stat, symbols)))
             pipe.expire(key, POOL_TTL_S)
             addrs.append(pool["address"])
         # rebuild the rankings from this snapshot (pools that left the hot set drop out)
