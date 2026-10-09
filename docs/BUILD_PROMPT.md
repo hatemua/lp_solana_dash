@@ -26,8 +26,19 @@ Goal: one platform that **indexes all Solana tokens and DLMM pools**, lets a use
 | Database | **PostgreSQL 16** (+ TimescaleDB extension if possible, for time series) |
 | Cache / queues / live data | **Redis** (latest pool stats, pub/sub to the web app, job queues, rate-limit counters) |
 | AI access | **MCP server** (TypeScript, `@modelcontextprotocol/sdk`) |
-| Deploy | **docker-compose** (postgres, redis, indexer, api, executor, bot, web, mcp) on our server; nginx in front with HTTPS |
+| Deploy | **docker-compose** (postgres, redis, indexer, api, executor, bot, web, mcp) on our server; nginx in front with HTTPS (Let's Encrypt) |
 | RPC | Helius (key in `.env`), public RPC only as backup |
+
+### Domains (production)
+| Domain | Serves |
+|---|---|
+| **`https://lp.joulity.com`** | Next.js web app (dashboard, pools, pool pages, wallet LP, bot dashboard) |
+| **`https://lp.api.joulity.com`** | REST API (`/v1/...`), live updates (SSE `/v1/stream` or WebSocket `/v1/ws`), health (`/health`), and the MCP server over streamable HTTP at **`/mcp`** |
+- DNS: A/AAAA records of both names → our server; nginx terminates TLS (Let's Encrypt, auto-renew) and proxies to the containers (web :3000, api :8000, mcp :8100). Postgres, Redis and the executor are **not** exposed publicly (internal docker network only).
+- CORS on the API: allow only `https://lp.joulity.com` (plus `http://localhost:3000` in dev).
+- Web env: `NEXT_PUBLIC_API_URL=https://lp.api.joulity.com`.
+- Auth: public read endpoints rate-limited; admin and bot endpoints (`/v1/bot/*`, `/v1/admin/*`) require login (wallet sign-in with an allow-listed admin wallet, or email + 2FA) and an admin session; MCP requires a bearer token.
+- Staging (optional): `staging.lp.joulity.com` / `staging.lp.api.joulity.com` from the `develop` branch.
 
 ### Data sources
 - Meteora DLMM data API `https://dlmm.datapi.meteora.ag`:
@@ -94,7 +105,7 @@ Track the LP wallets from our research (list in `docs/research/reverse-engineer-
   - `bot_status()`, `bot_positions()`, `strategy_stats(strategy)`.
 - Optional, protected by an admin token: `bot_pause()`, `bot_resume()`.
 - No MCP tool may move funds or sign transactions.
-- Document how to connect it from Claude (README section).
+- Served at `https://lp.api.joulity.com/mcp` (streamable HTTP, bearer token). Document how to connect it from Claude (README section).
 
 ### Security checklist (must pass before live mode)
 - **Keys and secrets:**
@@ -113,10 +124,10 @@ Track the LP wallets from our research (list in `docs/research/reverse-engineer-
 
 ### Acceptance per milestone
 - **M1:** ≥ 95% of DLMM pools with TVL ≥ $10k indexed; hot pool stats < 2 min old; 72 h OHLCV for hot pools.
-- **M2:** filters return in < 1 s; pool page shows candles + bins chart; a real add/remove liquidity works from a wallet with 0.1 SOL on a test pool.
+- **M2:** live at `https://lp.joulity.com` (API at `https://lp.api.joulity.com`); filters return in < 1 s; pool page shows candles + bins chart; a real add/remove liquidity works from a wallet with 0.1 SOL on a test pool.
 - **M3:** paper bot runs 24 h unattended with all strategies; dashboard shows fees/price/cost split.
 - **M4:** real P&L curve for the 5 LP wallets over 7 days.
-- **M5:** Claude can call `search_pools` and `top_opportunities` through MCP.
+- **M5:** Claude can call `search_pools` and `top_opportunities` through MCP at `https://lp.api.joulity.com/mcp`.
 
 Live money only after M3 paper results are positive over ≥ 30 positions and the security checklist is done.
 

@@ -9,4 +9,6 @@ Indexer of Solana tokens and Meteora DLMM pools, web dashboard (filters, charts,
   - [`lp-meteora.md`](docs/research/lp-meteora.md): LP backtests (fee burst, Rabbit Strat)
   - [`lp-shadow-prompt.md`](docs/research/lp-shadow-prompt.md): paper-trading model with real bin liquidity
 
+Production: web `https://lp.joulity.com`, API + MCP `https://lp.api.joulity.com`.
+
 Rules: paper mode first; live money only after positive paper results and the security checklist; no secrets in git.
