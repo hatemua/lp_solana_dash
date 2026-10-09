@@ -1,6 +1,6 @@
 # LP Solana Dash
 
-Indexer of Solana tokens and Meteora DLMM pools, web dashboard (filters, charts, wallet LP), Python LP bot (paper first), LP wallet tracker and a read-only MCP server.
+Indexer of Solana tokens and Meteora DLMM pools, web dashboard (filters, charts, wallet LP), Python LP bot (paper first), signal engine (when to enter / exit a pool) and a read-only MCP server.
 
 - **Build spec for the engineer:** [`docs/BUILD_PROMPT.md`](docs/BUILD_PROMPT.md) (milestones M1–M5)
 - **Research behind it:** [`docs/research/`](docs/research/)

@@ -4,16 +4,13 @@
 ## PROMPT START
 
 ### Why we build this (read first)
-Our research (in `docs/research/`) showed:
-- The "profitable smart wallets" on Solana are mostly **active Meteora DLMM liquidity providers**, not traders: they add liquidity in a narrow range at the current price, remove and re-add every 1–5 min to stay in the active bin, and sell the tokens they receive (`docs/research/reverse-engineer-wallets.md`).
-- How DLMM works and what decides LP profit: `docs/research/dlmm-mechanics.md`.
-- Backtests and the Rabbit Strat analysis: `docs/research/lp-meteora.md`. Shadow-test spec: `docs/research/lp-shadow-prompt.md`.
-Goal: one platform that **indexes all Solana tokens and DLMM pools**, lets a user **find pools with filters and charts**, **add liquidity from their own wallet**, or **run an LP bot** (paper first, real money only when enabled), and exposes the data to AI agents through an **MCP server**.
+Our research (in `docs/research/`) showed that the money on Solana memecoins is made by **active Meteora DLMM liquidity providers** who pick the right pool at the right time, keep liquidity near the price while volume is high, and get out when fees fade or the price starts dumping. How DLMM works and what decides LP profit: `docs/research/dlmm-mechanics.md`. Backtests (fee burst, Rabbit Strat): `docs/research/lp-meteora.md`. Paper model: `docs/research/lp-shadow-prompt.md`.
+Goal: a **dashboard of tokens and DLMM pools** (data, filters, charts) plus a **signal engine** that tells us **when to enter a pool, with which range, and when to exit**. The signals are exposed through an **MCP server** (so we can ask Claude "where should I LP now?") and used by our **LP bot** (paper first). Users can also add liquidity from their own wallet. **We do not track or copy other wallets.**
 
 ### Git (required)
 - Repo: **`github.com/hatemua/lp_solana_dash`** (this repo). Research referenced below is in **`docs/research/`**.
 - Layout: `indexer/` (Python), `bot/` (Python), `executor/` (Node/TS, Meteora SDK), `web/` (Next.js), `mcp/` (TS), `infra/` (docker-compose, nginx), `docs/`.
-- Branches: `main` is protected; one branch per milestone (`m1-indexer`, `m2-web`, `m3-bot`, `m4-lp-tracker`, `m5-mcp`), one **pull request per milestone** into `main` with a short description and screenshots. Commit small and often, push every day.
+- Branches: `main` is protected; one branch per milestone (`m1-indexer`, `m2-web`, `m3-bot`, `m4-signals`, `m5-mcp`), one **pull request per milestone** into `main` with a short description and screenshots. Commit small and often, push every day.
 - **Never commit secrets**: no private keys, `.env`, `.pem`, RPC/API keys, wallet files (`.gitignore` already blocks them). Ship `.env.example` with empty values. Secret scan (gitleaks) in CI.
 - CI (GitHub Actions): lint + type-check + unit tests for every service on each PR.
 
@@ -48,10 +45,10 @@ Goal: one platform that **indexes all Solana tokens and DLMM pools**, lets a use
   - `/pools/{address}/volume/history?timeframe=5m|1h` (fees, protocol_fees).
 - Meteora DLMM SDK (via executor): `getActiveBin`, `getBinsAroundActiveBin`, `getPositionsByUserAndLbPair`, add/remove liquidity, claim fees.
 - Jupiter: `https://datapi.jup.ag/v1/assets/search?query=<≤50 mints>` (holders, mcap, organicScore, audit, stats5m/1h/24h), `https://datapi.jup.ag/v2/charts/{mint}?interval=1_MINUTE|15_MINUTE&to=&candles=`, `https://lite-api.jup.ag/price/v3?ids=`, `https://lite-api.jup.ag/swap/v1/quote`.
-- Helius websockets for wallet/pool activity (LP wallets, our bot wallet).
+- Helius websockets for pool activity and our bot wallet.
 
 ### M1 — Indexer + database
-- **Tables:** `tokens` (mint, symbol, name, decimals, created_at, launchpad, holders, mcap, organic_score, audit json, updated_at), `pools` (address, token_x, token_y, bin_step, base_fee_pct, protocol_fee_pct, created_at, launchpad, tags), `pool_stats` (time series every 1–5 min: price, tvl, volume/fees 5m/1h/24h, fee/tvl, dynamic_fee_pct), `pool_ohlcv_5m`, `token_ohlcv_1m` (only for tracked tokens), `bins_snapshot` (for watched pools: active_bin, liquidity per bin ±70 bins, every 30–60 s), `lp_wallets` + `lp_events` (add/remove/claim per wallet, pool, bins, amounts, tx).
+- **Tables:** `tokens` (mint, symbol, name, decimals, created_at, launchpad, holders, mcap, organic_score, audit json, updated_at), `pools` (address, token_x, token_y, bin_step, base_fee_pct, protocol_fee_pct, created_at, launchpad, tags), `pool_stats` (time series every 1–5 min: price, tvl, volume/fees 5m/1h/24h, fee/tvl, dynamic_fee_pct), `pool_ohlcv_5m`, `token_ohlcv_1m` (only for tracked tokens), `bins_snapshot` (for watched pools: active_bin, liquidity per bin ±70 bins, every 30–60 s), `pool_metrics_1m` (computed every minute for hot pools — see M4), `pool_tvl_flow` (TVL / liquidity added and removed per 5 min, from pool snapshots).
 - **Jobs:**
   - full pool list every 10 min (all ~137k pools, paged);
   - hot pools (SOL pairs, TVL ≥ $10k or volume 1h ≥ $50k) stats every 60 s;
@@ -73,15 +70,16 @@ Goal: one platform that **indexes all Solana tokens and DLMM pools**, lets a use
   - **liquidity-by-bin chart** around the active bin (who holds what near the price);
   - fee/TVL history;
   - token safety panel;
-  - recent LP events.
+  - **signal panel**: LP score, entry/exit status, suggested range and shape (from M4), with the reasons.
 - **Wallet**: connect wallet; show the user's DLMM positions (value, fees earned, in range / out of range).
 - **Add liquidity** (non-custodial): choose range (±%, or bins), shape (spot / curve / bid-ask), one-sided SOL or token or 50/50, amount. Show cost preview: position rent (≈0.057 SOL, refundable), **bin-array rent if new bins (≈0.075 SOL, not refundable)**, estimated swap cost. The transaction is built by the SDK and **signed in the user's wallet**; the server never sees the user's key. Also remove liquidity / claim fees.
 
 ### M3 — LP bot (Python) — paper first
+- The bot **uses the M4 signals** for entry, range, size and exit (until M4 is ready, each strategy uses its own simple rules below).
 - **Strategies** (config files, one class each, same interface):
   - **R500 / R300 (Rabbit)**: volume burst trigger, token side or 50/50, exit on volume fade / stop / range break / max hold;
   - **Fee burst**: hourly volume ≥ 3× median of 24 h, spot ±20%;
-  - **Re-center** (what the profitable LP wallets do): narrow range at the active bin, re-center when the active bin leaves the middle N bins or every X min, sell received tokens when > Y% of the position (with a minimum time between re-centers to limit costs);
+  - **Re-center**: narrow range at the active bin, re-center when the active bin leaves the middle N bins or every X min, sell received tokens when > Y% of the position (with a minimum time between re-centers to limit costs);
   - **Evil Panda** (one-sided SOL far below).
 - **Paper mode (default)**: simulated positions using the **real bins** (our share per bin = our liquidity ÷ (existing + ours)), fees from pool fee deltas, real Jupiter quotes for swaps, all rents and tx costs (exactly the model in `docs/research/lp-shadow-prompt.md`).
 - **Live mode** (only when `BOT_MODE=live` AND an admin confirms in the UI):
@@ -91,20 +89,26 @@ Goal: one platform that **indexes all Solana tokens and DLMM pools**, lets a use
   - a global **STOP button** in the UI and a `POST /bot/stop` endpoint.
 - **Bot dashboard**: equity curve, open positions (range, in-range %, fees, P&L split into fees / price / costs), closed positions, per-strategy stats, logs.
 
-### M4 — LP wallet tracker
-Track the LP wallets from our research (list in `docs/research/reverse-engineer-wallets.md`; start with `3ZhqYVzg3RsoPhyRWTtGxB6F9LWyRBrpbVQ8bkaAkC1x`, `2WMJxEGiEGgFqaJKwyp45DVvDArSrGjaCEkpNoM9mrbz`, `syfpFKDZZbnfrdvE6dPRYXT12SUM2qDUR3zkUP2pXBx`, `AQPh29SFaSbsMTef9KzbEC9pVfthtjksnBLPyKiMxqs4`, `SF2QWGL9LHfxCNkNViskAGUELajCs8ASHZ6iVLvK4wM`).
-- Decode their DLMM actions (program `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9t5`): pool, bin range, amounts, time between re-centers, tokens sold after.
-- Compute **real P&L from SOL flows + position value** (not tracker PnL; trackers count LP withdrawals as free tokens).
-- Page: per wallet equity curve, which pools, range widths, re-center frequency → this is how we learn the exact rules to put in the Re-center strategy.
+### M4 — Signal engine: when to enter, which range, when to exit
+Python service that computes, **every minute for every hot pool**, metrics → an **LP score** → **entry / exit signals**, stores them (`pool_metrics_1m`, `signals`), pushes them to Redis, and is validated by a **backtest** on our own stored history.
+- **Metrics per pool:**
+  - fees: fee/TVL 5m and 1h, **fee velocity** (fees last 5 min ÷ average 5 min of the last hour), dynamic fee %;
+  - volume: pool volume 5m/1h, **volume burst** (5 min ÷ average 5 min of 24 h), token volume on all venues 1m/5m (Jupiter);
+  - price behaviour: change 5m/15m/1h, realized volatility (1-min returns, 30 min), **chop index** (sum of |moves| ÷ |net move| over 30–60 min: high = back-and-forth = good for LP), trend (net move ÷ volatility), distance from 1 h / 24 h high;
+  - liquidity: **liquidity within ±5 / ±20 bins of the active bin**, **our expected share of the active bin for a given $ size**, TVL change 5m/1h (LPs arriving or pulling out);
+  - token health: holders change 5m/1h, buy/sell ratio, top-10 %, dev %, mint/freeze authority, organic score, sudden liquidity pull.
+- **LP score 0–100** (weights in config): high and rising fees, high chop, not trending down hard, enough room (our share ≥ X% of the active bin), safe token. Show the score and **the reasons** (each component).
+- **Entry signal**: score ≥ threshold for N minutes + safety OK. Output: **suggested range** (width from volatility, e.g. ±k·σ for the expected hold), **shape** (spot when choppy, bid-ask when very volatile, one-sided SOL below when the token looks topped), **size** (cap so our share stays below Y% of the active bin), **expected fees per hour** for that size, risk level.
+- **Exit signals** (for a given position: pool, range, entry time): fee velocity < 50% of entry level, volume burst over, trend turns down (price in the lower part of the range and falling), price out of range for M minutes, TVL / liquidity pulled fast, holders dropping, safety flag changes. Output: HOLD / RE-CENTER / EXIT + reasons.
+- **Backtest** (`backtest/`): replay stored minute data with the paper LP model (real bins when available, `docs/research/lp-shadow-prompt.md`), measure every signal and preset (trades, win %, $/trade, fees vs price vs costs), **walk-forward** (tune on older days, test on newer). Results page in the web app; thresholds are only changed through backtest results.
 
 ### M5 — MCP server
 - Tools, **read-only**:
-  - `search_pools(filters)`, `get_pool(address)`, `get_pool_bins(address)`, `get_token(mint)`;
-  - `top_opportunities(preset)`;
-  - `lp_wallet_activity(wallet)`;
-  - `bot_status()`, `bot_positions()`, `strategy_stats(strategy)`.
-- Optional, protected by an admin token: `bot_pause()`, `bot_resume()`.
-- No MCP tool may move funds or sign transactions.
+  - data: `search_pools(filters)`, `get_pool(address)`, `get_pool_bins(address)`, `get_token(mint)`, `pool_history(address, timeframe)`;
+  - signals: **`best_pools_now(strategy, amount_usd)`** (ranked pools with score, suggested range/shape/size, expected fees/h, risks), **`pool_signal(address, amount_usd)`** (score + reasons + entry yes/no), **`exit_check(address, range_low, range_high, entry_time)`** (HOLD / RE-CENTER / EXIT + reasons);
+  - research: `backtest_results(strategy)`, `signal_stats(signal)`;
+  - bot: `bot_status()`, `bot_positions()`.
+- Optional, protected by an admin token: `bot_pause()`, `bot_resume()`. No MCP tool may move funds or sign transactions.
 - Served at `https://lp.api.joulity.com/mcp` (streamable HTTP, bearer token). Document how to connect it from Claude (README section).
 
 ### Security checklist (must pass before live mode)
@@ -126,8 +130,8 @@ Track the LP wallets from our research (list in `docs/research/reverse-engineer-
 - **M1:** ≥ 95% of DLMM pools with TVL ≥ $10k indexed; hot pool stats < 2 min old; 72 h OHLCV for hot pools.
 - **M2:** live at `https://lp.joulity.com` (API at `https://lp.api.joulity.com`); filters return in < 1 s; pool page shows candles + bins chart; a real add/remove liquidity works from a wallet with 0.1 SOL on a test pool.
 - **M3:** paper bot runs 24 h unattended with all strategies; dashboard shows fees/price/cost split.
-- **M4:** real P&L curve for the 5 LP wallets over 7 days.
-- **M5:** Claude can call `search_pools` and `top_opportunities` through MCP at `https://lp.api.joulity.com/mcp`.
+- **M4:** LP score + entry/exit signals updated every minute for all hot pools; backtest report (walk-forward) for each preset on ≥ 7 days of stored data.
+- **M5:** Claude can call `best_pools_now`, `pool_signal` and `exit_check` through MCP at `https://lp.api.joulity.com/mcp`.
 
 Live money only after M3 paper results are positive over ≥ 30 positions and the security checklist is done.
 
