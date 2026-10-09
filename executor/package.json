@@ -2,10 +2,12 @@
   "name": "lp-executor",
   "version": "0.1.0",
   "private": true,
-  "description": "Meteora DLMM SDK service (localhost only). M1: read-only pool bins.",
+  "description": "Meteora DLMM SDK service (internal only): pool bins, wallet positions, unsigned LP transactions",
   "type": "module",
   "main": "dist/server.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
@@ -16,7 +18,8 @@
   },
   "dependencies": {
     "@meteora-ag/dlmm": "^1.7.5",
-    "@solana/web3.js": "^1.98.0"
+    "@solana/web3.js": "^1.98.0",
+    "bn.js": "^5.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

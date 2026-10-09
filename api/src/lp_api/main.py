@@ -49,6 +49,10 @@ class RemoveLiquidityBody(BaseModel):
     claim_and_close: bool = False
 
 
+class SendBody(BaseModel):
+    transaction: str = Field(max_length=3000)   # base64, already signed by the user's wallet
+
+
 class ClaimBody(BaseModel):
     user: str = Field(pattern=ADDR)
     position: str = Field(pattern=ADDR)
@@ -274,6 +278,11 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     @app.post("/v1/tx/{pool}/claim-fees")
     async def claim(body: ClaimBody, pool: str = Path(..., pattern=ADDR)) -> Any:
         return await executor("POST", f"/v1/pools/{pool}/tx/claim-fees", body.model_dump())
+
+    @app.post("/v1/tx/send")
+    async def send_signed(body: SendBody) -> Any:
+        """Relay a transaction the user's wallet signed (keeps the RPC key off the browser)."""
+        return await executor("POST", "/v1/tx/send", body.model_dump())
 
     @app.get("/v1/tx/{pool}/quote")
     async def quote(pool: str = Path(..., pattern=ADDR), user: str = Query(..., pattern=ADDR),

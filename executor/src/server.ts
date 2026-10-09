@@ -1,11 +1,14 @@
 /**
- * Executor: the only service that talks to the Meteora DLMM SDK. Listens on localhost / the internal network only.
- * M1 is read-only (pool bins). It holds no keys and builds no transactions.
+ * Executor: the only service that talks to the Meteora DLMM SDK. Listens on the internal network only.
+ * Reads pool bins and wallet positions, and builds UNSIGNED LP transactions for the user's own wallet to sign.
+ * It holds no user or bot key (see wallet.ts).
  */
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { serializeBins, SdkBin } from "./bins.js";
+import { addLiquidity, claimFees, decimalsOf as decimalsOfToken, HttpError, quote, removeLiquidity,
+  sendSigned, userPositions } from "./wallet.js";
 
 // Load the SDK's CommonJS build: its ESM build has directory imports (@coral-xyz/anchor) that Node rejects.
 const require = createRequire(import.meta.url);
@@ -43,9 +46,30 @@ async function getPool(address: string) {
   return dlmm;
 }
 
-function decimalsOf(token: any): number { // eslint-disable-line @typescript-eslint/no-explicit-any
-  return Number(token?.mint?.decimals ?? token?.decimal ?? token?.decimals ?? 0);
+const decimalsOf = decimalsOfToken;
+
+const MAX_BODY = 16 * 1024;
+function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > MAX_BODY) reject(new HttpError(413, "body too large"));
+      else chunks.push(c);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        reject(new HttpError(400, "invalid JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
 }
+
+const B58 = "[1-9A-HJ-NP-Za-km-z]{32,44}";
 
 async function bins(address: string, left: number, right: number) {
   const dlmm = await getPool(address);
@@ -73,7 +97,31 @@ function send(res: ServerResponse, code: number, body: unknown): void {
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   stats.requests += 1;
-  if (req.method !== "GET") return send(res, 405, { error: "read-only service" });
+  try {
+    const posM = url.pathname.match(new RegExp(`^/v1/users/(${B58})/positions$`));
+    if (req.method === "GET" && posM) return send(res, 200, await userPositions(connection, DLMM, posM[1]));
+    const quoteM = url.pathname.match(new RegExp(`^/v1/pools/(${B58})/quote$`));
+    if (req.method === "GET" && quoteM) {
+      const dlmm = await getPool(quoteM[1]);
+      return send(res, 200, await quote(connection, dlmm, Number(url.searchParams.get("min_bin_id")),
+        Number(url.searchParams.get("max_bin_id"))));
+    }
+    if (req.method === "POST" && url.pathname === "/v1/tx/send") {
+      return send(res, 200, await sendSigned(connection, await readJson(req) as never));
+    }
+    const txM = url.pathname.match(new RegExp(`^/v1/pools/(${B58})/tx/(add-liquidity|remove-liquidity|claim-fees)$`));
+    if (req.method === "POST" && txM) {
+      const body = await readJson(req) as never;
+      const dlmm = await getPool(txM[1]);
+      const fn = { "add-liquidity": addLiquidity, "remove-liquidity": removeLiquidity, "claim-fees": claimFees }[txM[2]];
+      return send(res, 200, await fn!(connection, dlmm, body));
+    }
+  } catch (e) {
+    stats.errors += 1;
+    if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+    return send(res, 502, { error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+  }
+  if (req.method !== "GET") return send(res, 405, { error: "method not allowed" });
   if (url.pathname === "/health") {
     return send(res, 200, { ok: true, rpc: new URL(RPC_URLS[rpcIndex]).host, cachedPools: pools.size, ...stats });
   }
