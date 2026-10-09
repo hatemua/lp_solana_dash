@@ -94,3 +94,15 @@ def test_tvl_flow_add_and_price_effect() -> None:
 
 def test_tvl_flow_missing_data() -> None:
     assert M.tvl_flow({}, {"token_x_amount": 1})["net_flow_usd"] is None
+
+
+def test_nul_bytes_are_stripped(pools_page: dict[str, Any], jup_assets: list[dict[str, Any]]) -> None:
+    # real case: a token name from the Meteora list contained \x00, which Postgres rejects
+    p = dict(pools_page["data"][1])
+    p["name"] = "BAD\x00NAME"
+    p["token_x"] = dict(p["token_x"], name="X\x00", symbol="S\x00Y")
+    assert M.pool_row(p, NOW)["name"] == "BADNAME"
+    assert all("\x00" not in (t["name"] or "") + (t["symbol"] or "") for t in M.token_rows(p, NOW))
+    a = dict(jup_assets[0], name="J\x00", audit={"note\x00": "v\x00"})
+    row = M.jupiter_token_row(a, NOW)
+    assert row["name"] == "J" and row["audit"] == {"note": "v"}

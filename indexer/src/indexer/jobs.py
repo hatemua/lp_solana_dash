@@ -92,7 +92,7 @@ class Indexer:
         """Every pool (~137k), paged; pools + basic token info; stats for pools with TVL >= tracked_min_tvl."""
         c, now = self.cfg, datetime.now(UTC)
         ts = floor_ts(now, 60)
-        page, pages, n_pools, n_stats, failed = 1, None, 0, 0, 0
+        page, pages, n_pools, n_stats, failed, bad_pages = 1, None, 0, 0, 0, 0
         while pages is None or page <= pages:
             if self.stop.is_set():
                 return
@@ -109,12 +109,18 @@ class Indexer:
             for p in data:
                 for t in M.token_rows(p, now):
                     tokens[t["mint"]] = t
-            await self.db.upsert("tokens_basic", tokens.values())
-            n_pools += await self.db.upsert("pools", [M.pool_row(p, now) for p in data if p.get("address")])
-            tracked = [M.stat_row(p, ts) for p in data if (M.fnum(p.get("tvl")) or 0) >= c.tracked_min_tvl]
-            n_stats += await self.db.upsert("pool_stats", tracked)
+            try:
+                await self.db.upsert("tokens_basic", tokens.values())
+                n_pools += await self.db.upsert("pools", [M.pool_row(p, now) for p in data if p.get("address")])
+                tracked = [M.stat_row(p, ts) for p in data if (M.fnum(p.get("tvl")) or 0) >= c.tracked_min_tvl]
+                n_stats += await self.db.upsert("pool_stats", tracked)
+            except Exception:                    # one bad page must not stop the whole list
+                bad_pages += 1
+                log.exception("full pool list: page %d failed, continuing", page)
             page += 1
-        self._info("full_pool_list", pools=n_pools, pages=pages, stats_rows=n_stats)
+        self._info("full_pool_list", pools=n_pools, pages=pages, stats_rows=n_stats, bad_pages=bad_pages)
+        if bad_pages:
+            raise RuntimeError(f"{bad_pages} page(s) of the pool list could not be stored")
         log.info("full pool list: %d pools in %s pages, %d tracked stats", n_pools, pages, n_stats)
 
     async def hot_stats_job(self) -> None:

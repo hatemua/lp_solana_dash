@@ -6,6 +6,17 @@ from typing import Any
 from .config import SOL_MINT
 
 
+def clean(v: Any) -> Any:
+    """Strip NUL characters, which Postgres rejects in TEXT and JSONB (some token names contain them)."""
+    if isinstance(v, str):
+        return v.replace("\x00", "")
+    if isinstance(v, list):
+        return [clean(x) for x in v]
+    if isinstance(v, dict):
+        return {clean(k): clean(x) for k, x in v.items()}
+    return v
+
+
 def fnum(v: Any) -> float | None:
     try:
         f = float(v)
@@ -60,7 +71,7 @@ def is_hot(p: dict[str, Any], min_tvl: float, min_volume_1h: float) -> bool:
 
 def pool_row(p: dict[str, Any], now: datetime) -> dict[str, Any]:
     cfg = p.get("pool_config") or {}
-    return {
+    return clean({
         "address": p["address"],
         "name": p.get("name"),
         "token_x": (p.get("token_x") or {}).get("address"),
@@ -77,7 +88,7 @@ def pool_row(p: dict[str, Any], now: datetime) -> dict[str, Any]:
         "volume_24h": window(p.get("volume"), "24h"),
         "fees_24h": window(p.get("fees"), "24h"),
         "updated_at": now,
-    }
+    })
 
 
 def token_rows(p: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
@@ -99,7 +110,7 @@ def token_rows(p: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
             "is_verified": t.get("is_verified"),
             "updated_at": now,
         })
-    return out
+    return [clean(r) for r in out]
 
 
 def stat_row(p: dict[str, Any], ts: datetime, volume_5m: float | None = None,
@@ -153,7 +164,7 @@ def ohlcv_rows(pool: str, ohlcv: Any, volume: Any) -> list[dict[str, Any]]:
 
 def jupiter_token_row(a: dict[str, Any], now: datetime) -> dict[str, Any]:
     audit = a.get("audit") or {}
-    return {
+    return clean({
         "mint": a["id"],
         "symbol": a.get("symbol"),
         "name": a.get("name"),
@@ -169,7 +180,7 @@ def jupiter_token_row(a: dict[str, Any], now: datetime) -> dict[str, Any]:
         "freeze_authority_disabled": audit.get("freezeAuthorityDisabled"),
         "mint_authority_disabled": audit.get("mintAuthorityDisabled"),
         "updated_at": now,
-    }
+    })
 
 
 def candle_rows(mint: str, chart: Any) -> list[dict[str, Any]]:
