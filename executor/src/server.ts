@@ -3,13 +3,15 @@
  * M1 is read-only (pool bins). It holds no keys and builds no transactions.
  */
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import { Connection, PublicKey } from "@solana/web3.js";
-import DLMMModule from "@meteora-ag/dlmm";
 import { serializeBins, SdkBin } from "./bins.js";
 
-// the package ships CJS + ESM builds; take the class from either
+// Load the SDK's CommonJS build: its ESM build has directory imports (@coral-xyz/anchor) that Node rejects.
+const require = createRequire(import.meta.url);
+const dlmmPkg = require("@meteora-ag/dlmm");
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const DLMM: any = (DLMMModule as any).default ?? DLMMModule;
+const DLMM: any = dlmmPkg.default ?? dlmmPkg;
 
 const PORT = Number(process.env.EXECUTOR_PORT ?? 8200);
 const HOST = process.env.EXECUTOR_HOST ?? "0.0.0.0";
