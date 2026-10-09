@@ -57,6 +57,32 @@ services:
       - "127.0.0.1:8001:8001"   # health, localhost only (the API exposes it publicly in M2)
     networks: [internal]
 
+  api:
+    build: ../api
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-lp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lp}
+      REDIS_URL: redis://redis:6379/0
+      EXECUTOR_URL: http://executor:8200
+      INDEXER_HEALTH_URL: http://indexer:8001/health
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-https://lp.joulity.com}
+    ports:
+      - "127.0.0.1:8000:8000"   # nginx (host) terminates TLS for lp.api.joulity.com
+    networks: [internal]
+
+  web:
+    build:
+      context: ../web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://lp.api.joulity.com}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"   # nginx (host) terminates TLS for lp.joulity.com
+    networks: [internal]
+
 volumes:
   pgdata:
   redisdata:
