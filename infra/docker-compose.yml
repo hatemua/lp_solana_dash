@@ -1,0 +1,65 @@
+# LP Solana Dash. Postgres, Redis and the executor are on the internal network only (no published ports).
+# Run from the repo root:  docker compose -f infra/docker-compose.yml --env-file .env up -d --build
+name: lpdash
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-lp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-lp}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lp} -d ${POSTGRES_DB:-lp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+
+  executor:
+    build: ../executor
+    restart: unless-stopped
+    environment:
+      EXECUTOR_PORT: 8200
+      RPC_URL: ${RPC_URL:-}
+      RPC_BACKUP_URL: ${RPC_BACKUP_URL:-}
+    networks: [internal]
+
+  indexer:
+    build: ../indexer
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-lp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lp}
+      REDIS_URL: redis://redis:6379/0
+      EXECUTOR_URL: http://executor:8200
+      WATCH_POOLS_N: ${WATCH_POOLS_N:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "127.0.0.1:8001:8001"   # health, localhost only (the API exposes it publicly in M2)
+    networks: [internal]
+
+volumes:
+  pgdata:
+  redisdata:
+
+networks:
+  internal:
