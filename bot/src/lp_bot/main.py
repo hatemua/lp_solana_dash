@@ -115,7 +115,8 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
 
 async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies: list[Strategy],
                    sol_usd: float) -> int:
-    cands = await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h)
+    cands = [c for c in await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h)
+             if c.token_age_h is not None and c.token_age_h >= cfg.min_token_age_h]
     if not cands:
         return 0
     open_ = await store.open_positions(db)

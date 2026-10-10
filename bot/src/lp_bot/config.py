@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     tick_s: int = 60
     min_tvl: float = 10_000
     min_fees_1h: float = 300
+    min_token_age_h: float = 24          # all strategies: young tokens caused every big loss on day 1
     live_bins_each_side: int = 70
     log_level: str = "INFO"
 

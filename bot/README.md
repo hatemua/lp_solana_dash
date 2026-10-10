@@ -17,7 +17,7 @@ Dashboard: https://lp.joulity.com/bot · API: `/v1/bot/status`, `/v1/bot/positio
 | `grid` (S5) | safe token ≥ 24 h, \|trend\| < 2, volatility 1–8%, fees not fading | two-sided bid-ask grid ±3σ·√12 (8–34 bins a side), half swapped to the token | TP +5%, stop −12%, crash −25%, out of range 30 min, 6 h |
 | `fee_leader` (S6) | the table's top pools: fee/TVL ≥ 2%/h and fees ≥ $1k/h; mint/freeze off, top-10 ≤ 30%, ≥ 300 holders; **no age or mcap floor** | two-sided bid-ask grid ±3σ·√12 | TP +5%, stop −10%, crash −20% in 15 min, out of range 15 min, fee death 20 min, 2 h |
 
-All: max 3 open per strategy, one position per token, 1 h cooldown per pool (15 min for S3), rug exit (TVL −50% in
+All: token ≥ 24 h old (`MIN_TOKEN_AGE_H`), entry swap ≤ 2% (real quote), max 3 open per strategy, one position per token, 1 h cooldown per pool (15 min for S3), rug exit (TVL −50% in
 15 min). Rules come from [`docs/research/strategy-playbook.md`](../docs/research/strategy-playbook.md).
 
 ## How a minute is simulated
