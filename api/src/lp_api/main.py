@@ -379,6 +379,80 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         return StreamingResponse(gen(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    # ------------------------------------------------------------------ paper bot (M3, read-only views)
+    BOT_LABELS = {"topped_bid": "S1 Topped bid + flip", "meridian": "S2 Meridian bid-ask",
+                  "chop_spot": "S3 Chop spot (anti-sawtooth)"}
+
+    async def bot_rows(sql: str, **params: Any) -> list[dict[str, Any]]:
+        try:
+            return await rows(sql, **params)
+        except Exception as e:                      # bot tables not created yet
+            if "does not exist" in str(e):
+                return []
+            raise
+
+    @app.get("/v1/bot/status")
+    async def bot_status() -> dict[str, Any]:
+        """Paper bot: heartbeat and P&L per strategy ($100 virtual positions; no wallet, no real orders)."""
+        hb = None
+        try:
+            raw = await state["redis"].get("bot:heartbeat")
+            hb = json.loads(raw) if raw else None
+        except Exception:
+            hb = None
+        agg = await bot_rows(
+            "SELECT strategy, count(*) FILTER (WHERE status = 'open') AS open, "
+            "count(*) FILTER (WHERE status = 'closed') AS closed, "
+            "count(*) FILTER (WHERE status = 'closed' AND net_pct > 0) AS wins, "
+            "COALESCE(sum(pnl_usd) FILTER (WHERE status = 'closed'), 0) AS realized_usd, "
+            "COALESCE(sum(pnl_usd) FILTER (WHERE status = 'open'), 0) AS unrealized_usd, "
+            "COALESCE(sum(fees_usd), 0) AS fees_usd, COALESCE(sum(costs_usd), 0) AS costs_usd, "
+            "avg(net_pct) FILTER (WHERE status = 'closed') AS avg_net_pct, "
+            "COALESCE(sum(pnl_usd) FILTER (WHERE status = 'closed' AND closed_at > now() - interval '24 hours'), 0) "
+            "AS realized_24h_usd, min(opened_at) AS since FROM bot_positions GROUP BY strategy")
+        eq = await bot_rows("SELECT strategy, closed_at, sum(pnl_usd) OVER (PARTITION BY strategy "
+                            "ORDER BY closed_at, id) AS equity FROM bot_positions WHERE status = 'closed' "
+                            "ORDER BY closed_at")
+        by = {a["strategy"]: a for a in agg}
+        out = []
+        for name, label in BOT_LABELS.items():
+            a = by.get(name, {})
+            closed = a.get("closed") or 0
+            out.append({"strategy": name, "label": label, "open": a.get("open") or 0, "closed": closed,
+                        "win_rate": (a.get("wins") or 0) / closed if closed else None,
+                        "realized_usd": a.get("realized_usd") or 0, "unrealized_usd": a.get("unrealized_usd") or 0,
+                        "realized_24h_usd": a.get("realized_24h_usd") or 0, "fees_usd": a.get("fees_usd") or 0,
+                        "costs_usd": a.get("costs_usd") or 0, "avg_net_pct": a.get("avg_net_pct"),
+                        "since": a.get("since"),
+                        "equity": [{"ts": e["closed_at"], "usd": e["equity"]} for e in eq if e["strategy"] == name]})
+        return {"mode": "paper", "position_usd": 100, "max_open_per_strategy": 3, "heartbeat": hb,
+                "alive": bool(hb and time.time() - hb.get("ts", 0) < 300), "strategies": out,
+                "note": "virtual positions on live pool data; fees from real per-minute pool fees and bin liquidity"}
+
+    @app.get("/v1/bot/positions")
+    async def bot_positions(strategy: str | None = Query(None, max_length=32),
+                            status: str = Query("all", pattern="^(open|closed|all)$"),
+                            limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+        cond = ["TRUE"]
+        params: dict[str, Any] = {"lim": limit}
+        if strategy:
+            cond.append("strategy = :s")
+            params["s"] = strategy
+        if status != "all":
+            cond.append("status = :st")
+            params["st"] = status
+        data = await bot_rows(
+            "SELECT id, strategy, pool, name, status, opened_at, closed_at, entry_price, last_price, capital_usd, "
+            "net_pct, pnl_usd, fees_usd, costs_usd, flipped, exit_reason, state->'info' AS info, "
+            "(SELECT min((b->>'price')::float) FROM jsonb_array_elements(state->'legs') l, "
+            " jsonb_array_elements(l->'bins') b) AS range_low, "
+            "(SELECT max((b->>'price')::float) FROM jsonb_array_elements(state->'legs') l, "
+            " jsonb_array_elements(l->'bins') b) AS range_high, "
+            "(SELECT string_agg(l->>'name', ',') FROM jsonb_array_elements(state->'legs') l) AS legs "
+            f"FROM bot_positions WHERE {' AND '.join(cond)} ORDER BY status DESC, "
+            "COALESCE(closed_at, opened_at) DESC LIMIT :lim", **params)
+        return {"positions": data}
+
     # ------------------------------------------------------------------ wallet LP (non-custodial)
     @app.get("/v1/wallet/{owner}/positions")
     async def positions(owner: str = Path(..., pattern=ADDR)) -> Any:

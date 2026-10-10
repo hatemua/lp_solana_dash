@@ -105,6 +105,24 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://lp.api.joulity.com
 
+  bot:
+    name: bot (ruff, mypy, pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: bot/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: mypy
+      - run: pytest -q
+
   mcp:
     name: mcp (eslint, tsc, tests)
     runs-on: ubuntu-latest
