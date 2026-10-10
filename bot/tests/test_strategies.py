@@ -117,3 +117,13 @@ def test_pro_screen() -> None:
     assert "one_way_flow" in pro_screen(cand(**{**good.__dict__, "sell_vol_1h": 200_000}))
     assert "vertical_move" in pro_screen(cand(**{**good.__dict__, "price_change_1h_pct": 80.0}))
     assert "token" in pro_screen(cand(**{**good.__dict__, "bot_holders_pct": 45}))
+
+
+def test_fee_momentum_from_cumulative_fees() -> None:
+    from lp_bot.store import fee_momentum
+
+    steady = [(60.0 * i, 10.0 * i) for i in range(80)]                  # $10 per minute all along
+    assert abs((fee_momentum(steady) or 0) - 1.0) < 1e-9
+    slowing = [(60.0 * i, 10.0 * min(i, 64) + 2.0 * max(0, i - 64)) for i in range(80)]
+    assert (fee_momentum(slowing) or 9) < 0.5
+    assert fee_momentum(steady[:10]) is None

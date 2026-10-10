@@ -53,6 +53,7 @@ class Candidate:
     traders_1h: int = 0
     bot_holders_pct: float = 0.0
     price_change_1h_pct: float | None = None   # from Jupiter (all venues)
+    fee_momentum: float | None = None           # fees/min last 15 min vs the hour before (per-minute data)
 
     @property
     def step(self) -> float:
@@ -282,7 +283,7 @@ def pro_screen(c: Candidate) -> list[str]:
         bad.append("fees")                     # study: fee/TVL < 1%/h loses on average
     if c.fees_24h and c.fees_1h > 0.5 * c.fees_24h:
         bad.append("one_spike")                # the last hour is more than half of the day's fees
-    fv = fee_velocity(c.bars)
+    fv = c.fee_momentum if c.fee_momentum is not None else fee_velocity(c.bars)
     if fv is not None and fv < 0.8:
         bad.append("fading")
     if c.buy_vol_1h <= 0 or c.sell_vol_1h <= 0 or not (0.5 <= c.sell_vol_1h / c.buy_vol_1h <= 2.0):

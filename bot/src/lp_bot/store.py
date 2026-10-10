@@ -75,14 +75,42 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
         bars: dict[str, list[Bar]] = {}
         for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees "
                                 "FROM pool_ohlcv_5m WHERE pool = ANY($1) AND ts > now() - interval '5 hours' "
-                                "ORDER BY pool, ts",
+                                "AND ts <= now() - interval '10 minutes' ORDER BY pool, ts",   # final bars only
                                 [c.pool for c in out]):
             if r["close"]:
                 bars.setdefault(r["pool"], []).append(Bar(r["t"], r["high"] or r["close"], r["low"] or r["close"],
                                                           r["close"], r["fees"] or 0))
         for c in out:
             c.bars = bars.get(c.pool, [])
+        # fee momentum from per-minute cumulative fees (fresh, no forming 5-min bar):
+        # average fees per minute over the last 15 min / over the 60 min before
+        cum: dict[str, list[tuple[float, float]]] = {}
+        for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, cum_fees FROM pool_stats "
+                                "WHERE pool = ANY($1) AND ts > now() - interval '80 minutes' AND cum_fees IS NOT NULL "
+                                "ORDER BY pool, ts", [c.pool for c in out]):
+            cum.setdefault(r["pool"], []).append((r["t"], r["cum_fees"]))
+        for c in out:
+            c.fee_momentum = fee_momentum(cum.get(c.pool, []))
     return out
+
+
+def fee_momentum(points: list[tuple[float, float]]) -> float | None:
+    """(ts, cumulative fees) oldest first -> fees/min last 15 min divided by fees/min in the 60 min before."""
+    if len(points) < 40:
+        return None
+    t_end, c_end = points[-1]
+
+    def at(t: float) -> float | None:
+        before = [c for ts, c in points if ts <= t]
+        return before[-1] if before else None
+
+    c15, c75 = at(t_end - 15 * 60), at(t_end - 75 * 60)
+    if c15 is None or c75 is None:
+        c75 = points[0][1]
+        if c15 is None:
+            return None
+    recent, prev = max(0.0, c_end - c15) / 15, max(0.0, c15 - c75) / 60
+    return recent / prev if prev > 0 else None
 
 
 async def minutes(db: asyncpg.Pool, pools: list[str], since: float) -> dict[str, list[dict[str, Any]]]:
