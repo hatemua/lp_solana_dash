@@ -280,7 +280,7 @@ def pro_screen(c: Candidate) -> list[str]:
     if not (80 <= c.bin_step <= 125):
         bad.append("bin_step")
     if c.fees_1h < 500 or c.fee_tvl_1h < 1.0:
-        bad.append("fees")                     # study: fee/TVL < 1%/h loses; $500 vs $1k floor: +65% entries, ~same edge
+        bad.append("fees")                     # fee/TVL < 1%/h loses; $500 floor: +65% entries vs $1k, same edge
     if c.fees_24h and c.fees_1h > 0.5 * c.fees_24h:
         bad.append("one_spike")                # the last hour is more than half of the day's fees
     fv = c.fee_momentum if c.fee_momentum is not None else fee_velocity(c.bars)
