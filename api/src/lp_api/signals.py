@@ -168,7 +168,7 @@ def bins_for(pct: float, bin_step: int) -> int:
 
 
 def suggestion(m: Metrics, bin_step: int, active_bin: int | None, amount_usd: float) -> dict[str, Any]:
-    """Range width from volatility (+/- k * stdev over the expected hold), shape from chop/volatility/trend, size cap."""
+    """Range width from volatility (+/- k * stdev over the hold), shape from chop/volatility/trend, size cap."""
     vol = m.volatility_5m if m.volatility_5m is not None else 0.03
     width = max(0.03, min(0.6, 2.0 * vol * math.sqrt(HOLD_MINUTES / 5)))
     topped = (m.change_1h or 0) > 0.3 and (m.from_1h_high or 0) > -0.05
