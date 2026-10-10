@@ -197,6 +197,7 @@ export const TOOLS: ToolDef[] = [
       status: z.enum(["open", "closed", "all"]).default("open"),
       strategy: z
         .enum([
+          "pro_spot", "pro_spot_wide", "pro_bid",
           "topped_bid", "meridian", "chop_spot", "topped_bid_v2", "evil_panda", "grid", "fee_leader",
           "meridian_trail", "rabbit",
         ])

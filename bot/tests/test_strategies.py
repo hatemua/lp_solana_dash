@@ -101,3 +101,19 @@ def test_rabbit_entry_on_rising_token() -> None:
     assert plan and plan.buy_sol == 1.0 and {b.side for b in plan.legs[0].bins} == {"ask"}
     assert plan.legs[0].lowest() > 1.24 and plan.legs[0].highest() <= 1.24 * 1.30
     assert BY_NAME["rabbit"].entry(cand(price=1.24, bars=rising, token_age_h=3, fees_1h=2_000), 1.0) is None
+
+
+def test_pro_screen() -> None:
+    from lp_bot.strategies import pro_screen
+
+    flat = bars_from([1.0] * 15)
+    good = cand(bars=flat, tvl=60_000, fees_1h=1_500, fee_tvl_1h=2.5, fees_24h=20_000, buy_vol_1h=50_000,
+                sell_vol_1h=60_000, traders_1h=400, bot_holders_pct=5, price_change_1h_pct=4.0, organic=70)
+    assert pro_screen(good) == []
+    assert BY_NAME["pro_spot"].entry(good, 1.0) and BY_NAME["pro_bid"].entry(good, 1.0)
+    assert "tvl" in pro_screen(cand(**{**good.__dict__, "tvl": 900_000}))
+    assert "fees" in pro_screen(cand(**{**good.__dict__, "fee_tvl_1h": 0.4}))
+    assert "one_spike" in pro_screen(cand(**{**good.__dict__, "fees_24h": 2_000}))
+    assert "one_way_flow" in pro_screen(cand(**{**good.__dict__, "sell_vol_1h": 200_000}))
+    assert "vertical_move" in pro_screen(cand(**{**good.__dict__, "price_change_1h_pct": 80.0}))
+    assert "token" in pro_screen(cand(**{**good.__dict__, "bot_holders_pct": 45}))

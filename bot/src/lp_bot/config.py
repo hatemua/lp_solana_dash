@@ -15,13 +15,13 @@ class Settings(BaseSettings):
     executor_url: str = "http://localhost:8200"
 
     bot_mode: str = "paper"              # only "paper" is accepted
-    strategies: str = "topped_bid,meridian,chop_spot,topped_bid_v2,evil_panda,grid,fee_leader,meridian_trail,rabbit"
+    strategies: str = "pro_spot,pro_spot_wide,pro_bid"
     position_usd: float = 100.0
     max_open_per_strategy: int = 3
     tick_s: int = 60
     min_tvl: float = 10_000
     min_fees_1h: float = 300
-    min_token_age_h: float = 24          # all strategies: young tokens caused every big loss on day 1
+    min_token_age_h: float = 0           # study: fee/TVL predicts profit better than age; pro_screen does the rest
     live_bins_each_side: int = 70
     log_level: str = "INFO"
 

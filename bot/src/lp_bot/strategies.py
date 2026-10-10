@@ -47,6 +47,12 @@ class Candidate:
     token_age_h: float | None = None
     mint: str = ""
     decimals: int = 6
+    fees_24h: float = 0.0
+    buy_vol_1h: float = 0.0
+    sell_vol_1h: float = 0.0
+    traders_1h: int = 0
+    bot_holders_pct: float = 0.0
+    price_change_1h_pct: float | None = None   # from Jupiter (all venues)
 
     @property
     def step(self) -> float:
@@ -260,6 +266,80 @@ class Rabbit(Strategy):
         return (fee_velocity(c.bars) or 0) * c.fee_tvl_1h
 
 
-STRATEGIES: list[Strategy] = [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(), FeeLeader(),
-                              MeridianTrail(), Rabbit()]
+def pro_screen(c: Candidate) -> list[str]:
+    """Pool and token checks used by experienced Meteora LPs, tuned with our own study (backtest/lp_study.py).
+
+    Returns the failed checks (empty = pass). Sources: Meteora pool discovery (fees / active TVL, TVL floor),
+    LP Army bootcamp (mcap, 1 h fees), Evil Panda / GMGN (holders, top 10, bots), practical DLMM guide (sustained,
+    two-way activity, no entry after a vertical move), Meridian (bin step 80-125, bot holders <= 30%).
+    """
+    bad = []
+    if not (10_000 <= c.tvl <= 300_000):
+        bad.append("tvl")                      # our study: pools > $500k TVL won 25% of the time
+    if not (80 <= c.bin_step <= 125):
+        bad.append("bin_step")
+    if c.fees_1h < 1_000 or c.fee_tvl_1h < 1.0:
+        bad.append("fees")                     # study: fee/TVL < 1%/h loses on average
+    if c.fees_24h and c.fees_1h > 0.5 * c.fees_24h:
+        bad.append("one_spike")                # the last hour is more than half of the day's fees
+    fv = fee_velocity(c.bars)
+    if fv is not None and fv < 0.8:
+        bad.append("fading")
+    if c.buy_vol_1h <= 0 or c.sell_vol_1h <= 0 or not (0.5 <= c.sell_vol_1h / c.buy_vol_1h <= 2.0):
+        bad.append("one_way_flow")
+    if c.traders_1h < 100:
+        bad.append("few_traders")
+    ch = c.price_change_1h_pct
+    if ch is not None and abs(ch) > 30:
+        bad.append("vertical_move")
+    if not (c.mint_off and c.freeze_off) or c.mcap < 250_000 or c.holders < 500 or c.top10 > 30 \
+            or c.bot_holders_pct > 30 or c.organic < 50:
+        bad.append("token")
+    return bad
+
+
+class ProSpot(Strategy):
+    name = "pro_spot"
+    label = "P1 Pro pools, spot +/-10 bins"
+    bins_each_side = 10
+    rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-8, out_below_min=15, out_above_min=15,
+                      max_hours=2, crash_pct=-15, crash_window_min=15, fee_death_min=20, cooldown_min=20)
+
+    def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
+        if pro_screen(c):
+            return None
+        half = capital_sol / 2
+        legs = [Leg("S", spot_two_sided(c.price, self.bins_each_side, c.step, half, half / c.price))]
+        return Plan(legs, idle_sol=0.0, buy_sol=half, info={"fee_tvl_1h": c.fee_tvl_1h, "fees_1h": c.fees_1h,
+                                                             "token_age_h": c.token_age_h,
+                                                             "bins_each_side": self.bins_each_side})
+
+
+class ProSpotWide(ProSpot):
+    name = "pro_spot_wide"
+    label = "P2 Pro pools, spot +/-25 bins"
+    bins_each_side = 25
+    rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-10, out_below_min=20, out_above_min=20,
+                      max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, cooldown_min=30)
+
+
+class ProBid(Strategy):
+    name = "pro_bid"
+    label = "P3 Pro pools, SOL bid-ask (trails up)"
+    rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-12, out_below_min=30, out_above_min=5,
+                      max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, recenter_above=True,
+                      cooldown_min=30)
+
+    def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
+        if pro_screen(c):
+            return None
+        legs = [Leg("A", bid_bins_below(c.price, 69, c.step, capital_sol))]
+        return Plan(legs, idle_sol=0.0, buy_sol=0.0, info={"fee_tvl_1h": c.fee_tvl_1h, "fees_1h": c.fees_1h,
+                                                            "token_age_h": c.token_age_h})
+
+
+PRO: list[Strategy] = [ProSpot(), ProSpotWide(), ProBid()]
+
+STRATEGIES: list[Strategy] = PRO + [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(),
+                                    FeeLeader(), MeridianTrail(), Rabbit()]
 BY_NAME = {s.name: s for s in STRATEGIES}

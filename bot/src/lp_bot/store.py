@@ -47,16 +47,18 @@ async def sol_usd(db: asyncpg.Pool) -> float:
 async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> list[Candidate]:
     rows = await db.fetch(
         """WITH s AS (
-             SELECT DISTINCT ON (pool) pool, ts, price, tvl, fees_1h, fee_tvl_1h FROM pool_stats
+             SELECT DISTINCT ON (pool) pool, ts, price, tvl, fees_1h, fee_tvl_1h, fees_24h FROM pool_stats
              WHERE ts > now() - interval '3 minutes' ORDER BY pool, ts DESC)
            SELECT s.*, p.name, p.bin_step, p.base_fee_pct, t.mcap, t.holders, t.organic_score, t.audit,
-                  extract(epoch FROM now() - t.created_at) / 3600 AS token_age_h, t.mint, t.decimals
+                  extract(epoch FROM now() - t.created_at) / 3600 AS token_age_h, t.mint, t.decimals, t.stats
            FROM s JOIN pools p ON p.address = s.pool JOIN tokens t ON t.mint = p.token_x
            WHERE p.token_y = $1 AND s.tvl >= $2 AND s.fees_1h >= $3 AND s.price > 0""",
         SOL_MINT, min_tvl, min_fees_1h)
     out = []
     for r in rows:
         a = r["audit"] if isinstance(r["audit"], dict) else {}
+        st = r["stats"] if isinstance(r["stats"], dict) else {}
+        h1 = st.get("stats1h") or {}
         out.append(Candidate(pool=r["pool"], name=r["name"] or r["pool"][:6], price=r["price"], tvl=r["tvl"] or 0,
                              fees_1h=r["fees_1h"] or 0, fee_tvl_1h=r["fee_tvl_1h"] or 0, bin_step=r["bin_step"] or 100,
                              base_fee_pct=r["base_fee_pct"] or 1, mcap=r["mcap"] or 0, holders=r["holders"] or 0,
@@ -64,7 +66,11 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
                              mint_off=bool(a.get("mintAuthorityDisabled")),
                              freeze_off=bool(a.get("freezeAuthorityDisabled")),
                              token_age_h=float(r["token_age_h"]) if r["token_age_h"] is not None else None,
-                             mint=r["mint"], decimals=r["decimals"] if r["decimals"] is not None else 6))
+                             mint=r["mint"], decimals=r["decimals"] if r["decimals"] is not None else 6,
+                             fees_24h=r["fees_24h"] or 0, buy_vol_1h=float(h1.get("buyVolume") or 0),
+                             sell_vol_1h=float(h1.get("sellVolume") or 0), traders_1h=int(h1.get("numTraders") or 0),
+                             bot_holders_pct=float(a.get("botHoldersPercentage") or 0),
+                             price_change_1h_pct=h1.get("priceChange")))
     if out:
         bars: dict[str, list[Bar]] = {}
         for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees "
