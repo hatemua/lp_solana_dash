@@ -113,6 +113,7 @@ def test_pro_screen() -> None:
     assert BY_NAME["pro_spot"].entry(good, 1.0) and BY_NAME["pro_bid"].entry(good, 1.0)
     assert "tvl" in pro_screen(cand(**{**good.__dict__, "tvl": 900_000}))
     assert "fees" in pro_screen(cand(**{**good.__dict__, "fee_tvl_1h": 0.4}))
+    assert "fees" in pro_screen(cand(**{**good.__dict__, "fees_1h": 400}))
     assert "one_spike" in pro_screen(cand(**{**good.__dict__, "fees_24h": 2_000}))
     assert "one_way_flow" in pro_screen(cand(**{**good.__dict__, "sell_vol_1h": 200_000}))
     assert "vertical_move" in pro_screen(cand(**{**good.__dict__, "price_change_1h_pct": 80.0}))
