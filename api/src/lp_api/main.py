@@ -240,7 +240,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         pool = found[0]
         # only bars that are final: the indexer re-fetches the last 10 min each run, so a bar is complete once it
         # started >= 10 min ago (the newest bar is still forming and would read as "fees collapsed")
-        cond = "AND ts <= LEAST(to_timestamp(:until), now() - interval '10 minutes')" if until             else "AND ts <= now() - interval '10 minutes'"
+        final = "now() - interval '10 minutes'"
+        cond = f"AND ts <= LEAST(to_timestamp(:until), {final})" if until else f"AND ts <= {final}"
         candles = [S.Candle(ts=0, open=r["open"] or 0, high=r["high"] or 0, low=r["low"] or 0, close=r["close"] or 0,
                             volume=r["volume"] or 0, fees=r["fees"] or 0)
                    for r in await rows("SELECT open, high, low, close, volume, fees FROM pool_ohlcv_5m "
