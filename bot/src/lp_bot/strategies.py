@@ -324,15 +324,28 @@ class ProSpotWide(ProSpot):
                       max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, cooldown_min=30)
 
 
+def bid_screen(c: Candidate) -> list[str]:
+    """Looser screen for the SOL-only bid: replay (backtest/screen_study.py) fee/TVL >= 2%/h, TVL <= $300k, token
+    checks -> +1.35% mean, 61% wins, ~114 entries/day; the two-sided shapes lose money on this looser screen."""
+    bad = []
+    if c.fee_tvl_1h < 2.0:
+        bad.append("fees")
+    if not (10_000 <= c.tvl <= 300_000):
+        bad.append("tvl")
+    if not (c.mint_off and c.freeze_off) or c.mcap < 250_000 or c.holders < 500 or c.top10 > 30             or c.bot_holders_pct > 30:
+        bad.append("token")
+    return bad
+
+
 class ProBid(Strategy):
     name = "pro_bid"
-    label = "P3 Pro pools, SOL bid-ask (trails up)"
+    label = "P3 SOL bid-ask, fee/TVL >= 2% (trails up)"
     rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-12, out_below_min=30, out_above_min=5,
                       max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, recenter_above=True,
                       cooldown_min=30)
 
     def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
-        if pro_screen(c):
+        if bid_screen(c):
             return None
         legs = [Leg("A", bid_bins_below(c.price, 69, c.step, capital_sol))]
         return Plan(legs, idle_sol=0.0, buy_sol=0.0, info={"fee_tvl_1h": c.fee_tvl_1h, "fees_1h": c.fees_1h,
