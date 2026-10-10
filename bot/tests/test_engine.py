@@ -81,3 +81,25 @@ def test_crash_exit_and_failed_flip() -> None:
         q.step_minute(t, price, 0.0, SOL_USD, nobody, rules)
     assert q.flipped
     assert q.step_minute(t + 60, 0.45, 0.0, SOL_USD, nobody, rules) == "flip_failed"
+
+
+def test_recenter_up_instead_of_out_above() -> None:
+    from lp_bot.sim import bid_bins_below
+
+    p = Position(strategy="meridian_trail", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.015, legs=[Leg("A", bid_bins_below(1.0, 69, STEP, 1.0))], last_price=1.0)
+    rules = ExitRules(out_above_min=3, recenter_above=True)
+    for i in range(1, 4):
+        assert p.step_minute(60 * i, 1.2, 0.0, SOL_USD, nobody, rules) is None
+    assert p.info["recenters"] == 1 and 1.18 < p.legs[0].highest() < 1.2 and len(p.legs[0].bins) == 69
+    assert abs(p.value(1.2) - 1.0) < 1e-9                       # same SOL, just moved up
+
+
+def test_rabbit_sells_into_the_pump() -> None:
+    p = Position(strategy="rabbit", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.015, legs=[Leg("T", bid_ask(1.0, 1.01, 1.30, STEP, 1.0, "ask"))],
+                 last_price=1.0)
+    rules = ExitRules(take_profit=99, stop=-99, out_above_min=999)
+    assert p.step_minute(60, 1.15, 0.0, SOL_USD, nobody, rules) is None     # part sold, part still held
+    assert p.step_minute(120, 1.31, 0.0, SOL_USD, nobody, rules) == "sold_out"
+    assert p.net_pct(1.31) > 15                                             # sold between +1% and +30%

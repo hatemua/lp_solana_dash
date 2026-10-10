@@ -196,7 +196,10 @@ export const TOOLS: ToolDef[] = [
     input: {
       status: z.enum(["open", "closed", "all"]).default("open"),
       strategy: z
-        .enum(["topped_bid", "meridian", "chop_spot", "topped_bid_v2", "evil_panda", "grid", "fee_leader"])
+        .enum([
+          "topped_bid", "meridian", "chop_spot", "topped_bid_v2", "evil_panda", "grid", "fee_leader",
+          "meridian_trail", "rabbit",
+        ])
         .optional(),
       limit: z.number().int().min(1).max(200).default(30),
     },

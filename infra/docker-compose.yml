@@ -97,7 +97,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       EXECUTOR_URL: http://executor:8200
       BOT_MODE: paper                # hard-coded: the bot has no wallet and no keys (no key file is mounted)
-      STRATEGIES: ${BOT_STRATEGIES:-topped_bid,meridian,chop_spot,topped_bid_v2,evil_panda,grid,fee_leader}
+      STRATEGIES: ${BOT_STRATEGIES:-topped_bid,meridian,chop_spot,topped_bid_v2,evil_panda,grid,fee_leader,meridian_trail,rabbit}
       POSITION_USD: ${BOT_POSITION_USD:-100}
       MAX_OPEN_PER_STRATEGY: ${BOT_MAX_OPEN:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

@@ -91,3 +91,13 @@ def test_new_strategies_filters() -> None:
     rising = bars_from([1.0] * 20 + [1.0 + 0.02 * i for i in range(1, 13)])
     ep = BY_NAME["evil_panda"].entry(cand(price=1.24, bars=rising, token_age_h=100), 1.0)
     assert ep and ep.legs[0].highest() < 1.24 * 0.41 and ep.legs[0].lowest() > 1.24 * 0.09
+
+
+def test_rabbit_entry_on_rising_token() -> None:
+    rising = bars_from([1.0] * 20 + [1.0 + 0.02 * i for i in range(1, 13)])
+    for x in rising[-3:]:
+        x.fees = 30.0
+    plan = BY_NAME["rabbit"].entry(cand(price=1.24, bars=rising, token_age_h=100, fees_1h=2_000), 1.0)
+    assert plan and plan.buy_sol == 1.0 and {b.side for b in plan.legs[0].bins} == {"ask"}
+    assert plan.legs[0].lowest() > 1.24 and plan.legs[0].highest() <= 1.24 * 1.30
+    assert BY_NAME["rabbit"].entry(cand(price=1.24, bars=rising, token_age_h=3, fees_1h=2_000), 1.0) is None

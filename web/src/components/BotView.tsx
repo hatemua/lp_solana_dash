@@ -54,7 +54,7 @@ interface BotPosition {
 
 const SHORT: Record<string, string> = {
   topped_bid: "S1", meridian: "S2", chop_spot: "S3", topped_bid_v2: "S1b", evil_panda: "S4", grid: "S5",
-  fee_leader: "S6",
+  fee_leader: "S6", meridian_trail: "S2b", rabbit: "S7",
 };
 
 function since(ts: string, until?: string | null): string {

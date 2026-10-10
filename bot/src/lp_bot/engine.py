@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from .sim import Leg, bid_ask, fee_share
+from .sim import Leg, bid_ask, bid_bins_below, fee_share
 from .strategies import ExitRules
 
 TX_SOL = 0.0002                 # per on-chain action (open, close, flip), incl. priority fee
@@ -93,12 +93,15 @@ class Position:
         if self.out_below >= rules.out_below_min:
             return "out_below"
         if self.out_above >= rules.out_above_min:
-            return "out_above"
-        flip_leg = next((lg for lg in self.legs if lg.name == "F"), None)
-        if flip_leg:
-            sol_back, tok_left = flip_leg.sol_held(price), flip_leg.tokens(price) * price
+            if rules.recenter_above and self.info.get("recenters", 0) < rules.max_recenters:
+                self._recenter_below(price)
+            else:
+                return "out_above"
+        sell_leg = next((lg for lg in self.legs if lg.name in ("F", "T")), None)
+        if sell_leg:
+            sol_back, tok_left = sell_leg.sol_held(price), sell_leg.tokens(price) * price
             if sol_back >= 0.9 * (sol_back + tok_left):
-                return "flip_done"
+                return "flip_done" if sell_leg.name == "F" else "sold_out"
         deployed = self.deployed(price)
         if age_min >= rules.fee_death_min and deployed > 0 and len(self.fee_log) >= rules.fee_death_min:
             rate = sum(self.fee_log) * 60 / len(self.fee_log) / deployed * 100
@@ -107,6 +110,15 @@ class Position:
         if age_min >= rules.max_hours * 60:
             return "time"
         return None
+
+    def _recenter_below(self, price: float) -> None:
+        """All legs are SOL and the price is above them: rebuild the same ladder right under the new price."""
+        sol = sum(lg.sol_held(price) for lg in self.legs)
+        n = max(len(lg.bins) for lg in self.legs)
+        self.legs = [Leg("A", bid_bins_below(price, n, self.step, sol))]
+        self.out_above = 0
+        self.costs_sol += 2 * TX_SOL
+        self.info["recenters"] = self.info.get("recenters", 0) + 1
 
     def _maybe_flip(self, price: float) -> None:
         a = next((lg for lg in self.legs if lg.name == "A"), None)

@@ -11,6 +11,9 @@ S4 evil_panda  SOL-only bid-ask -60%..-90% on established tokens; waits for a de
 S5 grid        two-sided spot close to the price (buys below, sells above), +/-1.5 sigma over 1 h (6-20 bins a
                side), tokens >= 24 h, crash exit.
 S6 fee_leader  the table's leaders by fee/TVL (>= 2%/h), basic safety only (no age floor), same spot grid, 2 h max.
+S2b meridian_trail  S2, but when the price runs above the bids they move up under it (no upside left on the table).
+S7 rabbit      rising token (+10%..+60% in 1 h, fees accelerating): buy it, sell it back into the pump with a
+               token-side bid-ask from +1% to +30%; done when sold out, stop -8%.
 Swap costs (two-sided entries, selling tokens on exit) are real Jupiter quotes, see jupiter.py.
 """
 
@@ -78,6 +81,8 @@ class ExitRules:
     crash_pct: float | None = None     # exit if the price is this % below its high of the last crash_window_min
     crash_window_min: int = 30
     flip_stop: bool = False            # after a flip, exit if the price breaks below the pre-bounce low
+    recenter_above: bool = False       # SOL bids: when the price stays above them, move them up under it
+    max_recenters: int = 20
 
 
 def safe(c: Candidate, top10_max: float = 30) -> bool:
@@ -227,5 +232,34 @@ class FeeLeader(Strategy):
         return grid_plan(c, capital_sol, 1.5, {"fee_tvl_1h": c.fee_tvl_1h, "token_age_h": c.token_age_h})
 
 
-STRATEGIES: list[Strategy] = [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(), FeeLeader()]
+class MeridianTrail(Meridian):
+    name = "meridian_trail"
+    label = "S2b Meridian trail (re-center up)"
+    rules = ExitRules(take_profit=5, stop=-15, out_below_min=30, out_above_min=5, max_hours=12, recenter_above=True)
+
+
+class Rabbit(Strategy):
+    name = "rabbit"
+    label = "S7 Rabbit (sell into the pump)"
+    rules = ExitRules(take_profit=6, trail_trigger=3, trail_drop=1.5, stop=-8, out_below_min=10,
+                      out_above_min=24 * 60, max_hours=3, crash_pct=-12, crash_window_min=15, fee_death_min=30,
+                      cooldown_min=60)
+
+    def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
+        if not (safe(c) and old_enough(c) and c.fees_1h >= 1_000):
+            return None
+        ch = price_change(c.bars, c.price)
+        fv = fee_velocity(c.bars)
+        if ch is None or not (0.10 <= ch <= 0.60) or fv is None or fv < 1.2:
+            return None
+        tokens = capital_sol / c.price
+        legs = [Leg("T", bid_ask(c.price, 1 + c.step, 1.30, c.step, tokens, "ask"))]
+        return Plan(legs, idle_sol=0.0, buy_sol=capital_sol, info={"change_1h": ch, "fee_velocity": fv})
+
+    def rank(self, c: Candidate) -> float:
+        return (fee_velocity(c.bars) or 0) * c.fee_tvl_1h
+
+
+STRATEGIES: list[Strategy] = [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(), FeeLeader(),
+                              MeridianTrail(), Rabbit()]
 BY_NAME = {s.name: s for s in STRATEGIES}
