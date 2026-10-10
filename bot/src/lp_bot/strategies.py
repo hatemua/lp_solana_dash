@@ -340,6 +340,6 @@ class ProBid(Strategy):
 
 PRO: list[Strategy] = [ProSpot(), ProSpotWide(), ProBid()]
 
-STRATEGIES: list[Strategy] = PRO + [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(),
-                                    FeeLeader(), MeridianTrail(), Rabbit()]
+STRATEGIES: list[Strategy] = [*PRO, ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(),
+                              FeeLeader(), MeridianTrail(), Rabbit()]
 BY_NAME = {s.name: s for s in STRATEGIES}
