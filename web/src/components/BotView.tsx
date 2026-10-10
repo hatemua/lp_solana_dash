@@ -146,9 +146,11 @@ export function BotView() {
               <span className="font-semibold">{s.label}</span>
               <span className="ml-auto text-xs text-mut">{s.open} open</span>
             </div>
-            <div className={`text-2xl font-semibold ${color(s.realized_usd)}`}>{usd(s.realized_usd, 2)}</div>
+            <div className={`text-2xl font-semibold ${color(s.realized_usd + s.unrealized_usd)}`}>
+              {usd(s.realized_usd + s.unrealized_usd, 2)}
+            </div>
             <div className="mb-2 text-xs text-mut">
-              realized · 24 h <span className={color(s.realized_24h_usd)}>{usd(s.realized_24h_usd, 2)}</span> · open{" "}
+              total · closed <span className={color(s.realized_usd)}>{usd(s.realized_usd, 2)}</span> · open ({s.open}){" "}
               <span className={color(s.unrealized_usd)}>{usd(s.unrealized_usd, 2)}</span>
             </div>
             <Equity points={s.equity} />
