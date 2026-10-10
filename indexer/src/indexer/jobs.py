@@ -139,6 +139,10 @@ class Indexer:
         if by_tvl:
             self.tvl10k_truth = [p["address"] for p in by_tvl["data"] if (M.fnum(p.get("tvl")) or 0) >= 10_000]
         hot = {a: p for a, p in merged.items() if M.is_hot(p, c.hot_min_tvl, c.hot_min_volume_1h)}
+        # pools the paper bot holds positions in stay tracked however small they get (a rug must stay visible)
+        for a in await self._bot_pools():
+            if a not in hot and (p := merged.get(a) or await self.meteora.pool(a)):
+                hot[a] = p
         addrs = list(hot)
 
         last5 = {r["pool"]: r for r in await self.db.fetch(
@@ -165,6 +169,13 @@ class Indexer:
         self.hot, self.hot_stats, self.hot_at = hot, {s["pool"]: s for s in stats}, time.time()
         self._info("hot_stats", hot_pools=len(hot), sol_pools_tvl10k=sum(
             1 for p in hot.values() if (M.fnum(p.get("tvl")) or 0) >= 10_000), api_pools_tvl10k=len(self.tvl10k_truth))
+
+    async def _bot_pools(self) -> list[str]:
+        try:
+            return [r["pool"] for r in await self.db.fetch(
+                "SELECT DISTINCT pool FROM bot_positions WHERE status = 'open'")]
+        except Exception:                       # no bot tables (yet)
+            return []
 
     async def _tvl_flow(self, ts: datetime, stats: list[dict[str, Any]]) -> None:
         bucket = floor_ts(ts, 300)

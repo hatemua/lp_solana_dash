@@ -11,7 +11,7 @@
 from dataclasses import dataclass
 
 CRASH_EXITS = ("crash", "fast_drop", "rug", "sell_pressure", "dumping", "lp_exodus", "holders_leaving", "stop",
-               "flip_failed")
+               "flip_failed", "data_gap")
 
 
 @dataclass
