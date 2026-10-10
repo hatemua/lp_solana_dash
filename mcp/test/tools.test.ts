@@ -53,7 +53,7 @@ test("search_pools passes filters and trims rows", async () => {
   const api: Api = {
     get: async (_p, q) => {
       calls.push(q ?? {});
-      return { total: 1, pools: [{ address: POOL, tvl: 5, bins: [1, 2], name: "A-SOL", token_x: "x" }] };
+      return { total: 1, data: [{ address: POOL, tvl: 5, bins: [1, 2], name: "A-SOL", token_x: "x" }] };
     },
   };
   const out = (await tool("search_pools").run(api, {

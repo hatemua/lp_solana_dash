@@ -68,8 +68,8 @@ export const TOOLS: ToolDef[] = [
         sort: a.sort,
         order: a.order,
         limit: a.limit,
-      })) as { total?: number; pools?: Record<string, unknown>[] };
-      return { total: d.total, pools: (d.pools ?? []).map((p) => pick(p, POOL_FIELDS)) };
+      })) as { total?: number; data?: Record<string, unknown>[] };
+      return { total: d.total, pools: (d.data ?? []).map((p) => pick(p, POOL_FIELDS)) };
     },
   },
   {
