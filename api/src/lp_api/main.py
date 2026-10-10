@@ -18,8 +18,8 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from .config import Settings, get_settings
 from . import signals as S
+from .config import Settings, get_settings
 from .filters import PRESETS, FilterError, build_query
 from .ratelimit import RateLimiter
 
@@ -241,8 +241,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         cond = "AND ts <= to_timestamp(:until)" if until else ""
         candles = [S.Candle(ts=0, open=r["open"] or 0, high=r["high"] or 0, low=r["low"] or 0, close=r["close"] or 0,
                             volume=r["volume"] or 0, fees=r["fees"] or 0)
-                   for r in await rows(f"SELECT open, high, low, close, volume, fees FROM pool_ohlcv_5m WHERE pool = :a "
-                                       f"AND ts > now() - interval '24 hours' {cond} ORDER BY ts",
+                   for r in await rows("SELECT open, high, low, close, volume, fees FROM pool_ohlcv_5m "
+                                       f"WHERE pool = :a AND ts > now() - interval '24 hours' {cond} ORDER BY ts",
                                        a=address, **({"until": until} if until else {}))]
         cm = S.candle_metrics(candles)
         toks = {t["mint"]: t for t in await rows("SELECT mint, price_usd, audit FROM tokens WHERE mint IN (:x, :y)",
@@ -270,7 +270,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                       safety_ok=ok, safety_reasons=bad, **cm, **bl)
         return pool, m, bins
 
-    def signal_body(pool: dict[str, Any], m: S.Metrics, bins: dict[str, Any] | None, amount_usd: float) -> dict[str, Any]:
+    def signal_body(pool: dict[str, Any], m: S.Metrics, bins: dict[str, Any] | None,
+                    amount_usd: float) -> dict[str, Any]:
         sc, parts, reasons = S.score(m, amount_usd)
         sug = S.suggestion(m, int(pool.get("bin_step") or 100), bins["active"] if bins else None, amount_usd)
         enter = sc >= S.ENTRY_SCORE and m.safety_ok

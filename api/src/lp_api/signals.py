@@ -4,6 +4,7 @@ Heuristics, NOT yet validated by a backtest. The M4 signal engine replaces these
 with backtest-tuned rules. Every output carries `version: "v0-heuristic"` and its reasons.
 """
 
+import itertools
 import math
 import statistics
 from dataclasses import dataclass, field
@@ -69,7 +70,7 @@ def candle_metrics(candles: list[Candle]) -> dict[str, float | None]:
     out["change_15m"] = _chg(closes[-4], last) if len(closes) >= 4 else None
     out["change_1h"] = _chg(closes[-13], last) if len(closes) >= 13 else None
     window = closes[-13:]
-    rets = [math.log(b / a) for a, b in zip(window, window[1:], strict=False) if a > 0 and b > 0]
+    rets = [math.log(b / a) for a, b in itertools.pairwise(window) if a > 0 and b > 0]
     if len(rets) >= 3:
         vol = statistics.pstdev(rets)
         out["volatility_5m"] = vol
@@ -167,7 +168,7 @@ def bins_for(pct: float, bin_step: int) -> int:
 
 
 def suggestion(m: Metrics, bin_step: int, active_bin: int | None, amount_usd: float) -> dict[str, Any]:
-    """Range width from volatility (±k·σ over the expected hold), shape from chop/volatility/trend, capped size."""
+    """Range width from volatility (+/- k * stdev over the expected hold), shape from chop/volatility/trend, size cap."""
     vol = m.volatility_5m if m.volatility_5m is not None else 0.03
     width = max(0.03, min(0.6, 2.0 * vol * math.sqrt(HOLD_MINUTES / 5)))
     topped = (m.change_1h or 0) > 0.3 and (m.from_1h_high or 0) > -0.05
