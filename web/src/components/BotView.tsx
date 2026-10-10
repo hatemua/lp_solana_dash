@@ -26,7 +26,7 @@ interface Status {
   position_usd: number;
   max_open_per_strategy: number;
   alive: boolean;
-  heartbeat: { ts: number; ok?: boolean; error?: string; took_s?: number } | null;
+  heartbeat: { ts: number; ok?: boolean; error?: string; took_s?: number; paused?: string | null } | null;
   strategies: StrategyStats[];
   note: string;
 }
@@ -125,6 +125,7 @@ export function BotView() {
             {status.alive ? "● running" : "● stopped"}
             {status.heartbeat?.ts ? ` · last tick ${Math.round(Date.now() / 1000 - status.heartbeat.ts)}s ago` : ""}
             {status.heartbeat?.error ? ` · ${status.heartbeat.error}` : ""}
+            {status.heartbeat?.paused ? ` · new entries paused: ${status.heartbeat.paused}` : ""}
           </span>
         )}
       </div>

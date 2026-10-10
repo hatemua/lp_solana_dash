@@ -34,3 +34,20 @@ All: token ≥ 24 h old (`MIN_TOKEN_AGE_H`), entry swap ≤ 2% (real quote), max
 pip install -e ".[dev]" && ruff check . && mypy && pytest -q
 DATABASE_URL=... REDIS_URL=... EXECUTOR_URL=... lp-bot
 ```
+
+## Crash guards (`guards.py`)
+
+| Layer | Guard | Trigger |
+|---|---|---|
+| Entry | dumping | token −8% in 5 min or −25% in 1 h |
+| Entry | sell pressure | sellers > 2× buyers in 5 min (≥ $2k traded) |
+| Entry | LP exodus | pool TVL −20% in 30 min |
+| Entry | holders leaving | holders −2% in 1 h |
+| Entry | blacklist | the token hit a crash-type exit in the last 24 h |
+| Position | early warning (only while holding the token) | −8% in 5 min, sellers 3× buyers while −5%, TVL −20% in 30 min, holders −3% in 1 h |
+| Position | fast drop | −6% within 3 min |
+| Position | crash | −10% (P1) / −12% (P2) / −15% (P3) from the recent high |
+| Position | rug | TVL −30% in 15 min |
+| Position | stop | net −8% / −10% / −12% |
+| Portfolio | daily loss limit | today's P&L ≤ −$25: no new entries until UTC midnight |
+| Portfolio | SOL dump | SOL −4% in 1 h: no new entries |

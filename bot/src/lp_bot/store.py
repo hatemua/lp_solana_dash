@@ -154,7 +154,7 @@ def fee_momentum(points: list[tuple[float, float]]) -> float | None:
 
 
 async def minutes(db: asyncpg.Pool, pools: list[str], since: float) -> dict[str, list[dict[str, Any]]]:
-    """Per-minute stats (price, cumulative fees, TVL) from 31 min before `since` (fee deltas, rug and LP-exodus checks)."""
+    """Per-minute stats (price, cumulative fees, TVL) from 31 min before `since`: fee deltas, rug and LP exodus."""
     out: dict[str, list[dict[str, Any]]] = {}
     for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, price, cum_fees, tvl FROM pool_stats "
                             "WHERE pool = ANY($1) AND ts > to_timestamp($2) - interval '31 minutes' ORDER BY pool, ts",

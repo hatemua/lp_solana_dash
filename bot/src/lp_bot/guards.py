@@ -2,8 +2,9 @@
 
 1. Entry (don't catch a falling knife): the token is not dumping (5 min, 1 h), sellers don't dominate, LPs are not
    pulling liquidity, holders are not leaving, and the token did not crash on us in the last 24 h.
-2. In position (get out fast): see engine.Position.step_minute: fast drop (-6% within 3 min), crash vs the recent
-   high, sell pressure while falling, liquidity pulled (TVL -30% in 15 min).
+2. In position (get out before / during the crash), see engine.Position.step_minute: early warnings while we hold
+   the token (dumping -8% in 5 min, sellers 3x buyers while falling, LPs pulling 20% in 30 min, holders leaving),
+   fast drop (-6% within 3 min), crash vs the recent high, rug (TVL -30% in 15 min), stop.
 3. Portfolio (stop the bleeding): daily loss limit, SOL itself dumping, token blacklist after a crash exit.
 """
 
