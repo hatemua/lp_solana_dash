@@ -171,6 +171,7 @@ async def run_async() -> None:
 def run() -> None:
     cfg = get_settings()
     logging.basicConfig(level=cfg.log_level, format="%(asctime)s %(levelname)-7s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(run_async())
 
 
