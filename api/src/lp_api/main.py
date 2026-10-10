@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from .config import Settings, get_settings
+from . import signals as S
 from .filters import PRESETS, FilterError, build_query
 from .ratelimit import RateLimiter
 
@@ -228,6 +229,102 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         sql = ("SELECT ts, open, high, low, close, volume FROM token_ohlcv_1m WHERE mint = :m "
                "AND ts > now() - make_interval(mins => :n) ORDER BY ts")
         return {"mint": mint, "data": await rows(sql, m=mint, n=minutes)}
+
+    # ------------------------------------------------------------------ signals (v0 heuristics until M4)
+    async def pool_metrics(address: str, amount_usd: float, live_bins: bool,
+                           until: float | None = None) -> tuple[dict[str, Any], S.Metrics, dict[str, Any] | None]:
+        q = build_query({"q": address, "limit": 1}, 24 * 60)
+        found = await rows(q.sql, **q.params)
+        if not found:
+            raise HTTPException(404, "pool not found or no recent stats")
+        pool = found[0]
+        cond = "AND ts <= to_timestamp(:until)" if until else ""
+        candles = [S.Candle(ts=0, open=r["open"] or 0, high=r["high"] or 0, low=r["low"] or 0, close=r["close"] or 0,
+                            volume=r["volume"] or 0, fees=r["fees"] or 0)
+                   for r in await rows(f"SELECT open, high, low, close, volume, fees FROM pool_ohlcv_5m WHERE pool = :a "
+                                       f"AND ts > now() - interval '24 hours' {cond} ORDER BY ts",
+                                       a=address, **({"until": until} if until else {}))]
+        cm = S.candle_metrics(candles)
+        toks = {t["mint"]: t for t in await rows("SELECT mint, price_usd, audit FROM tokens WHERE mint IN (:x, :y)",
+                                                 x=pool["token_x"], y=pool["token_y"])}
+        bins = None
+        snap = await rows("SELECT active_bin_id, bins FROM bins_snapshot WHERE pool = :a "
+                          "AND ts > now() - interval '10 minutes' ORDER BY ts DESC LIMIT 1", a=address)
+        if snap:
+            bins = {"active": snap[0]["active_bin_id"], "bins": snap[0]["bins"]}
+        elif live_bins:
+            try:
+                d = await executor("GET", f"/v1/pools/{address}/bins?left=25&right=25")
+                bins = {"active": d["activeBinId"], "bins": d["bins"]}
+            except HTTPException:
+                bins = None
+        bl = S.bins_liquidity(bins["bins"] if bins else [], bins["active"] if bins else 0,
+                              (toks.get(pool["token_x"]) or {}).get("price_usd"),
+                              (toks.get(pool["token_y"]) or {}).get("price_usd"))
+        flow = await rows("SELECT COALESCE(sum(net_flow_usd), 0) AS f FROM pool_tvl_flow WHERE pool = :a "
+                          "AND ts > now() - interval '1 hour'", a=address)
+        audit = (toks.get(pool.get("token_mint")) or {}).get("audit") or {}
+        ok, bad = S.safety({**pool, "is_sus": audit.get("isSus") if isinstance(audit, dict) else None})
+        m = S.Metrics(fee_tvl_1h=pool.get("fee_tvl_1h"), fees_1h=pool.get("fees_1h"),
+                      volume_burst=pool.get("volume_burst"), tvl=pool.get("tvl"), tvl_flow_1h=flow[0]["f"],
+                      safety_ok=ok, safety_reasons=bad, **cm, **bl)
+        return pool, m, bins
+
+    def signal_body(pool: dict[str, Any], m: S.Metrics, bins: dict[str, Any] | None, amount_usd: float) -> dict[str, Any]:
+        sc, parts, reasons = S.score(m, amount_usd)
+        sug = S.suggestion(m, int(pool.get("bin_step") or 100), bins["active"] if bins else None, amount_usd)
+        enter = sc >= S.ENTRY_SCORE and m.safety_ok
+        return {"pool": pool["address"], "name": pool.get("name"), "token": pool.get("token_symbol"),
+                "lp_score": sc, "entry": enter, "components": parts, "reasons": reasons,
+                "suggestion": sug, "metrics": {k: v for k, v in m.__dict__.items() if k != "safety_reasons"},
+                "tvl": pool.get("tvl"), "fees_1h": pool.get("fees_1h"), "bin_step": pool.get("bin_step"),
+                "version": S.VERSION,
+                "note": "v0 heuristics, not yet validated by a backtest (M4 replaces them)"}
+
+    @app.get("/v1/signals/pool/{address}")
+    async def pool_signal(address: str = Path(..., pattern=ADDR),
+                          amount_usd: float = Query(100, gt=0, le=1_000_000)) -> dict[str, Any]:
+        pool, m, bins = await pool_metrics(address, amount_usd, live_bins=True)
+        return signal_body(pool, m, bins, amount_usd)
+
+    @app.get("/v1/signals/best")
+    async def best_pools(strategy: str = Query("any"), amount_usd: float = Query(100, gt=0, le=1_000_000),
+                         limit: int = Query(10, ge=1, le=25)) -> dict[str, Any]:
+        """Rank candidate pools by LP score. strategy: any | a preset id (rabbit500, fee_burst, ...)."""
+        args: dict[str, Any] = {"sort": "fee_tvl_1h", "limit": 30, "sol_pair": True, "tvl_min": 10_000,
+                                "fees_1h_min": 25}
+        if strategy != "any":
+            if strategy not in PRESETS:
+                raise HTTPException(400, f"unknown strategy; use any or one of {sorted(PRESETS)}")
+            args = {"preset": strategy, "limit": 30}
+        q = build_query(args, cfg.stats_max_age_min)
+        cands = await rows(q.sql, **q.params)
+        out = []
+        for c in cands:
+            pool, m, bins = await pool_metrics(c["address"], amount_usd, live_bins=False)
+            out.append(signal_body(pool, m, bins, amount_usd))
+        out.sort(key=lambda x: (-x["lp_score"]))
+        return {"strategy": strategy, "amount_usd": amount_usd, "candidates": len(cands), "version": S.VERSION,
+                "pools": out[:limit]}
+
+    @app.get("/v1/signals/exit-check/{address}")
+    async def exit_check(address: str = Path(..., pattern=ADDR), range_low: float = Query(..., gt=0),
+                         range_high: float = Query(..., gt=0), entry_time: float = Query(..., gt=0)) -> dict[str, Any]:
+        """range_low/high: prices (token Y per token X, as in the pool); entry_time: unix seconds."""
+        if range_high <= range_low:
+            raise HTTPException(400, "range_high must be above range_low")
+        pool, m, _ = await pool_metrics(address, 0, live_bins=False)
+        _, m_entry, _ = await pool_metrics(address, 0, live_bins=False, until=entry_time)
+        closes = await rows("SELECT ts, close FROM pool_ohlcv_5m WHERE pool = :a AND ts >= to_timestamp(:t) "
+                            "ORDER BY ts DESC", a=address, t=entry_time)
+        out_min = 0.0
+        for r in closes:
+            if r["close"] is not None and not (range_low <= r["close"] <= range_high):
+                out_min += 5
+            else:
+                break
+        res = S.exit_check(m, pool.get("price"), range_low, range_high, m_entry.fee_velocity, out_min)
+        return {"pool": address, "name": pool.get("name"), "price": pool.get("price"), **res}
 
     # ------------------------------------------------------------------ live stream (SSE)
     @app.get("/v1/stream")
