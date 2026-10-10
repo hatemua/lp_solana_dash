@@ -95,3 +95,22 @@ regime, by leg type, by exit rule; at least 30 closed tokens before any conclusi
 - Support levels: VPVR from 5 m pool OHLCV vs fixed −55%.
 - Fee share model: our liquidity / (our + others' in each crossed bin) using bin snapshots every minute.
 - Does the deep layer B ever pay for its rent in 24 h? (Our earlier test: Evil Panda −85% almost never filled in 6 h.)
+
+## 8. First backtest (backtest/playbook_v1.py, 2026-10-10, last 26 h, 346 SOL pools)
+
+TOPPED entries (pump ≥ +30%, then 15–45% below the peak), leg A = SOL bid-ask −5%..−55% (V1, 90%) or A 60% + deep
+leg B −50%..−85% 30% (V2); real 5-min fees, fee share from real bin snapshots / median liquidity profile × TVL.
+On-chain check: bin arrays already exist down to ~−94% in active pools, so deep ranges pay no extra rent.
+
+| Variant, min fees 1 h | Trades | Win rate | 1 slot of $100 | 3 slots of $100 |
+|---|---|---|---|---|
+| V1, $500 | 64 | 31% | +$19.1 / 26 h (+$17.6/day) | +$25.5 (+$23.6/day) |
+| V1, $1,000 | 37 | 27% | +$6.6 (+$6.1/day) | +$13.3 (+$12.3/day) |
+| V2, $500 | 66 | 17% | +$11.4 | −$7.7 (3 stops at −21%) |
+| V2, $1,000 | 35 | 17% | +$3.4 | +$7.5 |
+
+Reading: most entries never fill (44 of 64 exit "out above": the price bounced away, cost ≈ $0.07); losses are tiny
+because nothing filled; **one flip (SWOLF, +17.7%) makes most of the profit**. The deep leg B adds the large losses.
+26 h and one good flip is far too little to conclude: re-run daily as data accumulates; paper bot next.
+Caveats: fee share assumes nobody outside the ±70-bin snapshot (optimistic for deep bins); token screen uses current
+holders/audit (look-ahead); no slippage on entry (SOL only, none needed).
