@@ -53,6 +53,24 @@ PRESETS: dict[str, dict[str, Any]] = {
                     "mint_disabled": True, "freeze_disabled": True, "top10_pct_max": 30, "tvl_min": 50_000},
         "sort": "fee_tvl_24h",
     },
+    # from open-source DLMM bots (docs/research/strategies-web.md)
+    "high_volume": {
+        "label": "High volume (Scout)",
+        "description": "TVL >= $10k, 24 h volume >= $100k, fee/TVL >= 0.5% in 1 h and >= 10% in 24 h, 1 h price "
+                       "change between -30% and +50% (LP-Meteora-Scout-Bot stage A/B).",
+        "filters": {"sol_pair": True, "tvl_min": 10_000, "volume_24h_min": 100_000, "fee_tvl_1h_min": 0.5,
+                    "fee_tvl_24h_min": 10, "price_change_1h_min": -30, "price_change_1h_max": 50},
+        "sort": "fee_tvl_1h",
+    },
+    "meridian": {
+        "label": "Meridian",
+        "description": "TVL $10k-150k, mcap $150k-10M, >= 500 holders, organic >= 60, top-10 <= 60%, bin step 80-125 "
+                       "(Meridian agent defaults; deploys one-sided SOL bid-ask, stop -15%, out of range 30 min).",
+        "filters": {"sol_pair": True, "tvl_min": 10_000, "tvl_max": 150_000, "mcap_min": 150_000,
+                    "mcap_max": 10_000_000, "holders_min": 500, "organic_score_min": 60, "top10_pct_max": 60,
+                    "bin_step_min": 80, "bin_step_max": 125},
+        "sort": "fee_tvl_1h",
+    },
 }
 
 

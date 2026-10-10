@@ -279,7 +279,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                           "AND ts > now() - interval '1 hour'", a=address)
         audit = (toks.get(pool.get("token_mint")) or {}).get("audit") or {}
         ok, bad = S.safety({**pool, "is_sus": audit.get("isSus") if isinstance(audit, dict) else None})
-        m = S.Metrics(fee_tvl_1h=pool.get("fee_tvl_1h"), fees_1h=pool.get("fees_1h"),
+        ft = pool.get("fee_tvl_1h")                     # stored in percent (Meteora API); signals use a fraction
+        m = S.Metrics(fee_tvl_1h=ft / 100 if ft is not None else None, fees_1h=pool.get("fees_1h"),
                       volume_burst=pool.get("volume_burst"), tvl=pool.get("tvl"), tvl_flow_1h=flow[0]["f"],
                       safety_ok=ok, safety_reasons=bad, **cm, **bl)
         return pool, m, bins

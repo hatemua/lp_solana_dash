@@ -8,7 +8,9 @@ import type { Api } from "./api.js";
 
 const ADDR = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "base58 Solana address");
 const AMOUNT = z.number().positive().max(1_000_000).default(100).describe("Position size in USD");
-const PRESET = z.enum(["rabbit500", "rabbit300", "fee_burst", "evil_panda", "safe_established"]);
+const PRESET = z.enum([
+  "rabbit500", "rabbit300", "fee_burst", "evil_panda", "safe_established", "high_volume", "meridian",
+]);
 
 // compact pool row for list results (the API returns many more columns)
 const POOL_FIELDS = [
