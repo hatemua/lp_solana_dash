@@ -25,7 +25,7 @@ def test_spot_two_sided_value_at_entry() -> None:
     bins = S.spot_two_sided(2.0, 10, STEP, sol_amount=1.0, tok_amount=0.5)
     leg = S.Leg("S", bins)
     assert math.isclose(leg.value(2.0), 1.0 + 0.5 * 2.0)
-    assert leg.tokens(2.0) == 0.5 and leg.tokens(3.0) == 0    # above the range everything is sold
+    assert math.isclose(leg.tokens(2.0), 0.5) and leg.tokens(3.0) == 0    # above the range everything is sold
 
 
 def test_fee_share_split_with_other_lps() -> None:

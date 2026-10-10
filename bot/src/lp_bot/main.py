@@ -163,7 +163,7 @@ async def run_async() -> None:
             await redis.set("bot:heartbeat", json.dumps(status), ex=600)
         except Exception:
             log.warning("redis heartbeat failed")
-        HEARTBEAT.write_text(str(int(time.time())))
+        await asyncio.to_thread(HEARTBEAT.write_text, str(int(time.time())))
         # run ~20 s after each minute so the indexer's per-minute stats are in
         await asyncio.sleep(max(5.0, cfg.tick_s - (time.time() % 60) + 20) if cfg.tick_s == 60 else cfg.tick_s)
 

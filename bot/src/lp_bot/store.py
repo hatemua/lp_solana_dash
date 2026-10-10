@@ -64,8 +64,8 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
                              freeze_off=bool(a.get("freezeAuthorityDisabled"))))
     if out:
         bars: dict[str, list[Bar]] = {}
-        for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees FROM pool_ohlcv_5m "
-                                "WHERE pool = ANY($1) AND ts > now() - interval '5 hours' ORDER BY pool, ts",
+        for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees "
+                                "FROM pool_ohlcv_5m WHERE pool = ANY($1) AND ts > now() - interval '5 hours' ORDER BY pool, ts",
                                 [c.pool for c in out]):
             if r["close"]:
                 bars.setdefault(r["pool"], []).append(Bar(r["t"], r["high"] or r["close"], r["low"] or r["close"],

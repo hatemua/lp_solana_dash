@@ -1,5 +1,6 @@
 """Regime signals from 5-min pool bars (oldest first): pump-then-top, chop, fee velocity."""
 
+import itertools
 import math
 import statistics
 from dataclasses import dataclass
@@ -44,7 +45,7 @@ def chop_stats(bars: list[Bar]) -> dict:
     out: dict = {"chop": None, "trend": None, "vol": None}
     if len(w) < 6:
         return out
-    rets = [math.log(b / a) for a, b in zip(w, w[1:], strict=False)]
+    rets = [math.log(b / a) for a, b in itertools.pairwise(w)]
     vol = statistics.pstdev(rets) if len(rets) > 1 else 0.0
     out["vol"] = vol
     net = abs(math.log(w[-1] / w[0]))

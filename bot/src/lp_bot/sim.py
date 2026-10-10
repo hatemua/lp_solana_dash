@@ -77,7 +77,8 @@ def bid_ask(p0: float, lo: float, hi: float, step: float, amount: float, side: s
     """
     r = 1 + step
     if side == "bid":
-        ks = list(range(max(1, math.ceil(math.log(1 / hi) / math.log(r))), math.floor(math.log(1 / lo) / math.log(r)) + 1))
+        k0, k1 = math.ceil(math.log(1 / hi) / math.log(r)), math.floor(math.log(1 / lo) / math.log(r))
+        ks = list(range(max(1, k0), k1 + 1))
         w = list(range(1, len(ks) + 1))
         tot = sum(w)
         return [Bin(price=p0 / r ** k, sol=amount * wi / tot, side="bid") for k, wi in zip(ks, w, strict=True)]
