@@ -274,9 +274,10 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                     amount_usd: float) -> dict[str, Any]:
         sc, parts, reasons = S.score(m, amount_usd)
         sug = S.suggestion(m, int(pool.get("bin_step") or 100), bins["active"] if bins else None, amount_usd)
-        enter = sc >= S.ENTRY_SCORE and m.safety_ok
+        enter, no_entry = S.entry_decision(sc, m, pool.get("pool_age_h"))
         return {"pool": pool["address"], "name": pool.get("name"), "token": pool.get("token_symbol"),
-                "lp_score": sc, "entry": enter, "components": parts, "reasons": reasons,
+                "lp_score": sc, "entry": enter, "no_entry_reasons": no_entry, "components": parts,
+                "reasons": reasons, "pool_age_h": pool.get("pool_age_h"),
                 "suggestion": sug, "metrics": {k: v for k, v in m.__dict__.items() if k != "safety_reasons"},
                 "tvl": pool.get("tvl"), "fees_1h": pool.get("fees_1h"), "bin_step": pool.get("bin_step"),
                 "version": S.VERSION,
@@ -304,9 +305,15 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         for c in cands:
             pool, m, bins = await pool_metrics(c["address"], amount_usd, live_bins=False)
             out.append(signal_body(pool, m, bins, amount_usd))
-        out.sort(key=lambda x: (-x["lp_score"]))
+        out.sort(key=lambda x: (not x["entry"], -x["lp_score"]))
+        best, seen = [], set()
+        for x in out:                              # keep the best pool of each token
+            key = x.get("token") or x["pool"]
+            if key not in seen:
+                seen.add(key)
+                best.append(x)
         return {"strategy": strategy, "amount_usd": amount_usd, "candidates": len(cands), "version": S.VERSION,
-                "pools": out[:limit]}
+                "pools": best[:limit]}
 
     @app.get("/v1/signals/exit-check/{address}")
     async def exit_check(address: str = Path(..., pattern=ADDR), range_low: float = Query(..., gt=0),

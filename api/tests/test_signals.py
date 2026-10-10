@@ -24,6 +24,20 @@ def test_fee_velocity_and_changes() -> None:
     assert abs((m["change_1h"] or 0) - 0.1) < 1e-9
 
 
+def test_flat_price_has_no_chop() -> None:
+    assert S.candle_metrics(candles([1.0] * 12 + [1.0001]))["chop"] is None
+
+
+def test_entry_decision_blocks_new_pools_and_fading_fees() -> None:
+    m = S.Metrics(fee_velocity=1.2, safety_ok=True)
+    assert S.entry_decision(80, m, pool_age_h=5)[0]
+    ok, why = S.entry_decision(80, m, pool_age_h=0.2)
+    assert not ok and "min old" in why[0]
+    ok, why = S.entry_decision(80, S.Metrics(fee_velocity=0.1, safety_ok=True), pool_age_h=5)
+    assert not ok and "fading" in why[0]
+    assert not S.entry_decision(40, m, 5)[0]
+
+
 def test_too_little_data() -> None:
     assert S.candle_metrics(candles([1.0]))["chop"] is None
 

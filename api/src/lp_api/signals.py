@@ -15,6 +15,8 @@ VERSION = "v0-heuristic"
 # score weights (sum 100) and thresholds; M4 tunes these on stored history
 WEIGHTS = {"fees": 30, "fee_velocity": 15, "chop": 20, "trend": 15, "room": 10, "volume": 10}
 ENTRY_SCORE = 60
+MIN_POOL_AGE_H = 1.0                # brand-new pools: fee/TVL is meaningless and rugs are common
+MIN_FEE_VELOCITY = 0.5              # fees fading to under half of the last hour's pace: no entry
 MAX_SHARE_OF_ACTIVE_BIN = 0.20      # size so our share of the active bin stays below this
 HOLD_MINUTES = 60                   # expected hold used for the range width
 
@@ -76,7 +78,11 @@ def candle_metrics(candles: list[Candle]) -> dict[str, float | None]:
         out["volatility_5m"] = vol
         net = abs(math.log(window[-1] / window[0]))
         moves = sum(abs(r) for r in rets)
-        out["chop"] = moves / net if net > 1e-9 else (moves / 1e-9 if moves > 0 else None)
+        hi = max(c.high for c in candles[-12:] if c.high) if any(c.high for c in candles[-12:]) else window[-1]
+        lo = min(c.low for c in candles[-12:] if c.low) if any(c.low for c in candles[-12:]) else window[0]
+        span = math.log(hi / lo) if hi > 0 and lo > 0 else 0.0
+        # a flat price is not "choppy": below 0.5% of total movement the index means nothing
+        out["chop"] = moves / max(net, 0.1 * span, 1e-9) if moves >= 0.005 else None
         out["trend"] = (math.log(window[-1] / window[0]) / (vol * math.sqrt(len(rets)))) if vol > 0 else 0.0
     highs_1h = [c.high for c in candles[-12:] if c.high]
     highs_24 = [c.high for c in candles[-288:] if c.high]
@@ -161,6 +167,20 @@ def score(m: Metrics, amount_usd: float) -> tuple[float, dict[str, float], list[
         total = min(total, 30.0)
         reasons.append("safety: " + "; ".join(m.safety_reasons))
     return round(total, 1), {k: round(v, 3) for k, v in parts.items()}, reasons
+
+
+def entry_decision(score_: float, m: Metrics, pool_age_h: float | None) -> tuple[bool, list[str]]:
+    """Entry = score >= threshold and safety OK and the pool is not brand new and fees are not fading."""
+    why = []
+    if score_ < ENTRY_SCORE:
+        why.append(f"score {score_:.0f} < {ENTRY_SCORE}")
+    if not m.safety_ok:
+        why.append("safety check failed")
+    if pool_age_h is not None and pool_age_h < MIN_POOL_AGE_H:
+        why.append(f"pool is only {pool_age_h * 60:.0f} min old")
+    if m.fee_velocity is not None and m.fee_velocity < MIN_FEE_VELOCITY:
+        why.append(f"fees fading (velocity {m.fee_velocity:.2f}x)")
+    return not why, why
 
 
 def bins_for(pct: float, bin_step: int) -> int:
