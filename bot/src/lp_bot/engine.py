@@ -139,7 +139,8 @@ class Position:
                 "costs_sol": self.costs_sol, "peak_net": self.peak_net, "trail_on": self.trail_on,
                 "low_since_fill": self.low_since_fill, "flipped": self.flipped, "out_below": self.out_below,
                 "out_above": self.out_above, "last_ts": self.last_ts, "last_price": self.last_price,
-                "fee_log": list(self.fee_log), "px_log": [list(x) for x in self.px_log], "info": self.info, "step": self.step, "sell_cost": self.sell_cost,
+                "fee_log": list(self.fee_log), "px_log": [list(x) for x in self.px_log], "info": self.info,
+                "step": self.step, "sell_cost": self.sell_cost,
                 "capital_sol": self.capital_sol}
 
     @staticmethod
