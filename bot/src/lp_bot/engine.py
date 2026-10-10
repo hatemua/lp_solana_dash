@@ -54,7 +54,7 @@ class Position:
 
     # ------------------------------------------------------------------ one minute
     def step_minute(self, ts: float, price: float, pool_fees_usd: float, sol_usd: float, others_usd: Any,
-                    rules: ExitRules, tvl_drop_15m: float | None = None) -> str | None:
+                    rules: ExitRules, tvl_drop_15m: float | None = None, pressure: bool = False) -> str | None:
         """Advance to `ts`; returns an exit reason or None."""
         prev = self.last_price or price
         earned = fee_share(self.legs, prev, price, self.step, pool_fees_usd * LP_SHARE, sol_usd, others_usd) / sol_usd
@@ -74,8 +74,13 @@ class Position:
         self.out_above = self.out_above + 1 if price > highest and self.tokens(price) == 0 else 0
         age_min = (ts - self.opened_at) / 60
 
-        if tvl_drop_15m is not None and tvl_drop_15m <= -0.5:
-            return "rug"
+        if tvl_drop_15m is not None and tvl_drop_15m <= -0.3:
+            return "rug"                                   # LPs pulled 30% of the pool within 15 min
+        last3 = [px for t, px in self.px_log if t >= ts - 3 * 60]
+        if last3 and (price / max(last3) - 1) * 100 <= -6:
+            return "fast_drop"                             # -6% within 3 minutes: don't wait for the stop
+        if pressure and self.tokens(price) > 0:
+            return "sell_pressure"                         # sellers 3x buyers and price -5% in 5 min
         if net >= rules.take_profit:
             return "take_profit"
         if net >= rules.trail_trigger:

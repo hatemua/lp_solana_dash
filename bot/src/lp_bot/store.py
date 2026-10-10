@@ -7,6 +7,7 @@ import asyncpg
 
 from .config import SOL_MINT
 from .engine import Position
+from .guards import CRASH_EXITS, TokenFlow
 from .signals import Bar
 from .strategies import Candidate
 
@@ -59,6 +60,7 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
         a = r["audit"] if isinstance(r["audit"], dict) else {}
         st = r["stats"] if isinstance(r["stats"], dict) else {}
         h1 = st.get("stats1h") or {}
+        flow = token_flow(st)
         out.append(Candidate(pool=r["pool"], name=r["name"] or r["pool"][:6], price=r["price"], tvl=r["tvl"] or 0,
                              fees_1h=r["fees_1h"] or 0, fee_tvl_1h=r["fee_tvl_1h"] or 0, bin_step=r["bin_step"] or 100,
                              base_fee_pct=r["base_fee_pct"] or 1, mcap=r["mcap"] or 0, holders=r["holders"] or 0,
@@ -70,7 +72,7 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
                              fees_24h=r["fees_24h"] or 0, buy_vol_1h=float(h1.get("buyVolume") or 0),
                              sell_vol_1h=float(h1.get("sellVolume") or 0), traders_1h=int(h1.get("numTraders") or 0),
                              bot_holders_pct=float(a.get("botHoldersPercentage") or 0),
-                             price_change_1h_pct=h1.get("priceChange")))
+                             price_change_1h_pct=h1.get("priceChange"), flow=flow))
     if out:
         bars: dict[str, list[Bar]] = {}
         for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees "
@@ -91,7 +93,45 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
             cum.setdefault(r["pool"], []).append((r["t"], r["cum_fees"]))
         for c in out:
             c.fee_momentum = fee_momentum(cum.get(c.pool, []))
+        tvl30 = {r["pool"]: r["tvl"] for r in await db.fetch(
+            "SELECT DISTINCT ON (pool) pool, tvl FROM pool_stats WHERE pool = ANY($1) "
+            "AND ts BETWEEN now() - interval '36 minutes' AND now() - interval '30 minutes' ORDER BY pool, ts DESC",
+            [c.pool for c in out])}
+        for c in out:
+            old = tvl30.get(c.pool)
+            c.tvl_change_30m = (c.tvl / old - 1) if old and c.tvl else None
     return out
+
+
+def token_flow(stats: dict[str, Any]) -> TokenFlow:
+    m5, h1 = stats.get("stats5m") or {}, stats.get("stats1h") or {}
+    return TokenFlow(chg5m_pct=m5.get("priceChange"), chg1h_pct=h1.get("priceChange"),
+                     buy5m=float(m5.get("buyVolume") or 0), sell5m=float(m5.get("sellVolume") or 0),
+                     holder_change_1h_pct=h1.get("holderChange"))
+
+
+async def flows(db: asyncpg.Pool, mints: list[str]) -> dict[str, TokenFlow]:
+    rows = await db.fetch("SELECT mint, stats FROM tokens WHERE mint = ANY($1)", mints)
+    return {r["mint"]: token_flow(r["stats"] if isinstance(r["stats"], dict) else {}) for r in rows}
+
+
+async def blacklisted_mints(db: asyncpg.Pool) -> set[str]:
+    """Tokens that hit a crash-type exit in the last 24 h (any strategy)."""
+    return {r["m"] for r in await db.fetch(
+        "SELECT DISTINCT state->'info'->>'mint' AS m FROM bot_positions WHERE status = 'closed' "
+        "AND exit_reason = ANY($1) AND closed_at > now() - interval '24 hours'", list(CRASH_EXITS)) if r["m"]}
+
+
+async def day_pnl_usd(db: asyncpg.Pool) -> float:
+    """Today's (UTC) closed P&L plus the open positions' current P&L."""
+    return float(await db.fetchval(
+        "SELECT COALESCE(sum(pnl_usd), 0) FROM bot_positions WHERE status = 'open' "
+        "OR (status = 'closed' AND closed_at >= date_trunc('day', now()))") or 0)
+
+
+async def sol_change_1h(db: asyncpg.Pool) -> float | None:
+    v = await db.fetchval("SELECT stats->'stats1h'->>'priceChange' FROM tokens WHERE mint = $1", SOL_MINT)
+    return float(v) if v is not None else None
 
 
 def fee_momentum(points: list[tuple[float, float]]) -> float | None:

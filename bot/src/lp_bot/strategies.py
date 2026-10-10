@@ -54,6 +54,8 @@ class Candidate:
     bot_holders_pct: float = 0.0
     price_change_1h_pct: float | None = None   # from Jupiter (all venues)
     fee_momentum: float | None = None           # fees/min last 15 min vs the hour before (per-minute data)
+    flow: Any = None                            # guards.TokenFlow
+    tvl_change_30m: float | None = None
 
     @property
     def step(self) -> float:
@@ -304,7 +306,7 @@ class ProSpot(Strategy):
     label = "P1 Pro pools, spot +/-10 bins"
     bins_each_side = 10
     rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-8, out_below_min=15, out_above_min=15,
-                      max_hours=2, crash_pct=-15, crash_window_min=15, fee_death_min=20, cooldown_min=20)
+                      max_hours=2, crash_pct=-10, crash_window_min=15, fee_death_min=20, cooldown_min=20)
 
     def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
         if pro_screen(c):
@@ -321,7 +323,7 @@ class ProSpotWide(ProSpot):
     label = "P2 Pro pools, spot +/-25 bins"
     bins_each_side = 25
     rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-10, out_below_min=20, out_above_min=20,
-                      max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, cooldown_min=30)
+                      max_hours=4, crash_pct=-12, crash_window_min=30, fee_death_min=30, cooldown_min=30)
 
 
 def bid_screen(c: Candidate) -> list[str]:
@@ -342,7 +344,7 @@ class ProBid(Strategy):
     name = "pro_bid"
     label = "P3 SOL bids, even 30 bins, fee/TVL >= 2% (trails up)"
     rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-12, out_below_min=30, out_above_min=5,
-                      max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, recenter_above=True,
+                      max_hours=4, crash_pct=-15, crash_window_min=15, fee_death_min=30, recenter_above=True,
                       cooldown_min=30)
 
     def entry(self, c: Candidate, capital_sol: float) -> Plan | None:

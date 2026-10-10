@@ -17,6 +17,7 @@ import httpx
 from redis.asyncio import Redis
 
 from . import jupiter, store
+from .guards import entry_guard, exit_pressure, portfolio_pause
 from .config import Settings, get_settings
 from .engine import TX_SOL, Position
 from .strategies import BY_NAME, Strategy
@@ -24,6 +25,7 @@ from .strategies import BY_NAME, Strategy
 log = logging.getLogger("lp_bot")
 HEARTBEAT = Path("/tmp/lp_bot_heartbeat")
 MAX_ENTRY_SWAP_COST = 0.02
+PAUSED: dict[str, str | None] = {"reason": None}
 _SKIP: dict[str, float] = {}                     # mint -> until: too expensive to buy, re-quote after 30 min
 
 
@@ -76,6 +78,7 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
     since = min(p.last_ts for p in positions)
     mins = await store.minutes(db, sorted({p.pool for p in positions}), since)
     bins_cache: dict[str, list[dict[str, Any]] | None] = {}
+    flow_by_mint = await store.flows(db, sorted({p.info["mint"] for p in positions if p.info.get("mint")}))
     closed = 0
     for p in positions:
         rows = mins.get(p.pool, [])
@@ -95,7 +98,8 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
             drop = (r["tvl"] / old["tvl"] - 1) if old and old["tvl"] and r["tvl"] else None
             if not r["price"]:
                 continue
-            reason = p.step_minute(r["t"], r["price"], fees, sol_usd, others, rules, drop)
+            pressure = r is new[-1] and exit_pressure(flow_by_mint.get(p.info.get("mint", "")))
+            reason = p.step_minute(r["t"], r["price"], fees, sol_usd, others, rules, drop, pressure)
             if reason:
                 break
         if reason:
@@ -119,6 +123,21 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
              if c.token_age_h is not None and c.token_age_h >= cfg.min_token_age_h]
     if not cands:
         return 0
+    pause = portfolio_pause(await store.day_pnl_usd(db), cfg.daily_loss_limit_usd, await store.sol_change_1h(db))
+    if pause:
+        log.info("entries paused: %s", pause)
+        PAUSED["reason"] = pause
+        return 0
+    PAUSED["reason"] = None
+    black = await store.blacklisted_mints(db)
+    guarded = []
+    for c in cands:
+        why = entry_guard(c.flow, c.tvl_change_30m, c.mint in black) if c.flow else []
+        if why:
+            log.debug("guard %s: %s", c.name, why)
+        else:
+            guarded.append(c)
+    cands = guarded
     open_ = await store.open_positions(db)
     opened = 0
     capital_sol = cfg.position_usd / sol_usd
@@ -187,6 +206,7 @@ async def run_async() -> None:
             status["closed"] = await step_open(db, client, cfg, sol)
             status["opened"] = await open_new(db, client, cfg, strategies, sol)
             status["ok"] = True
+            status["paused"] = PAUSED["reason"]
         except Exception as e:                      # keep running; the error is visible in the heartbeat
             log.exception("tick failed")
             status.update(ok=False, error=str(e)[:300])

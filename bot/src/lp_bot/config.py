@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     tick_s: int = 60
     min_tvl: float = 10_000
     min_fees_1h: float = 300
+    daily_loss_limit_usd: float = 25.0    # no new entries for the rest of the UTC day below this
     min_token_age_h: float = 0           # study: fee/TVL predicts profit better than age; pro_screen does the rest
     live_bins_each_side: int = 70
     log_level: str = "INFO"
