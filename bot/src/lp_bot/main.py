@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from redis.asyncio import Redis
 
-from . import store
+from . import jupiter, store
 from .config import Settings, get_settings
 from .engine import TX_SOL, Position
 from .strategies import BY_NAME, Strategy
@@ -97,6 +97,11 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
             if reason:
                 break
         if reason:
+            toks = p.tokens(p.last_price)
+            if toks > 0 and p.info.get("mint"):          # the real cost of selling what we hold back to SOL
+                p.sell_cost = await jupiter.sell_cost(client, p.info["mint"], int(p.info.get("decimals", 6)), toks,
+                                                      p.last_price)
+                p.info["exit_swap_cost_pct"] = round(p.sell_cost * 100, 3)
             net = p.close(p.last_price)
             await store.close(db, p, reason, net, sol_usd)
             log.info("close %s %s %s net %+.2f%% fees $%.2f", p.strategy, p.name, reason, net, p.fees_sol * sol_usd)
@@ -106,7 +111,8 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
     return closed
 
 
-async def open_new(db: Any, cfg: Settings, strategies: list[Strategy], sol_usd: float) -> int:
+async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies: list[Strategy],
+                   sol_usd: float) -> int:
     cands = await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h)
     if not cands:
         return 0
@@ -129,11 +135,17 @@ async def open_new(db: Any, cfg: Settings, strategies: list[Strategy], sol_usd: 
             if not plan:
                 continue
             n_positions = sum(math.ceil(len(lg.bins) / 69) for lg in plan.legs)
+            swap_cost = 0.0
+            info = {k: v for k, v in plan.info.items() if isinstance(v, int | float | str | None)}
+            info.update(mint=c.mint, decimals=c.decimals)
+            if plan.buy_sol > 0:                           # the token half: real Jupiter quote
+                frac = await jupiter.buy_cost(client, c.mint, c.decimals, plan.buy_sol, c.price)
+                swap_cost = plan.buy_sol * frac
+                info["entry_swap_cost_pct"] = round(frac * 100, 3)
             p = Position(strategy=s.name, pool=c.pool, name=c.name, opened_at=time.time(), entry_price=c.price,
                          capital_sol=capital_sol, step=c.step, sell_cost=c.sell_cost, legs=plan.legs,
-                         idle_sol=plan.idle_sol, costs_sol=plan.entry_cost_sol + n_positions * TX_SOL,
-                         last_ts=time.time(), last_price=c.price, info={k: v for k, v in plan.info.items()
-                                                                        if isinstance(v, int | float | str | None)})
+                         idle_sol=plan.idle_sol, costs_sol=swap_cost + n_positions * TX_SOL,
+                         last_ts=time.time(), last_price=c.price, info=info)
             p.id = await store.insert(db, p, cfg.position_usd, sol_usd)
             log.info("open %s %s at %.3g (%s)", s.name, c.name, c.price, json.dumps(p.info, default=str)[:200])
             slots -= 1
@@ -162,7 +174,7 @@ async def run_async() -> None:
             if sol <= 0:
                 raise RuntimeError("no SOL price")
             status["closed"] = await step_open(db, client, cfg, sol)
-            status["opened"] = await open_new(db, cfg, strategies, sol)
+            status["opened"] = await open_new(db, client, cfg, strategies, sol)
             status["ok"] = True
         except Exception as e:                      # keep running; the error is visible in the heartbeat
             log.exception("tick failed")

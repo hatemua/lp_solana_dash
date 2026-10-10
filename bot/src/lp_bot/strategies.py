@@ -8,8 +8,10 @@ S3 chop_spot   Anti-sawtooth: two-sided spot around the price in choppy pools, w
                out of range 15 min (re-entered after the cooldown = re-center).
 S1b topped_bid_v2  S1 + token >= 24 h old + crash exit (-25% in 30 min) + stop when the bounce fails after a flip.
 S4 evil_panda  SOL-only bid-ask -60%..-90% on established tokens; waits for a deep dump, flips the bounce, 24 h.
-S5 grid        two-sided bid-ask grid (buys below, sells above), +/-3 sigma over 1 h, tokens >= 24 h, crash exit.
-S6 fee_leader  the table's leaders by fee/TVL (>= 2%/h), basic safety only (no age floor), two-sided grid, 2 h max.
+S5 grid        two-sided spot close to the price (buys below, sells above), +/-1.5 sigma over 1 h (6-20 bins a
+               side), tokens >= 24 h, crash exit.
+S6 fee_leader  the table's leaders by fee/TVL (>= 2%/h), basic safety only (no age floor), same spot grid, 2 h max.
+Swap costs (two-sided entries, selling tokens on exit) are real Jupiter quotes, see jupiter.py.
 """
 
 import math
@@ -17,10 +19,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .signals import Bar, chop_stats, fee_velocity, price_change, topped
-from .sim import Leg, bid_ask, bid_bins_below, grid_bid_ask, spot_two_sided
+from .sim import Leg, bid_ask, bid_bins_below, spot_two_sided
 
-SLIPPAGE = 0.01                    # selling memecoin tokens back to SOL, on top of the pool fee
-SLIPPAGE_ENTRY = 0.005             # buying the token half of a two-sided position
+SELL_COST_ESTIMATE = 0.015         # marks open positions; the exit uses a real Jupiter quote
 
 
 @dataclass
@@ -41,6 +42,8 @@ class Candidate:
     freeze_off: bool
     bars: list[Bar] = field(default_factory=list)
     token_age_h: float | None = None
+    mint: str = ""
+    decimals: int = 6
 
     @property
     def step(self) -> float:
@@ -48,14 +51,14 @@ class Candidate:
 
     @property
     def sell_cost(self) -> float:
-        return self.base_fee_pct / 100 + SLIPPAGE
+        return SELL_COST_ESTIMATE
 
 
 @dataclass
 class Plan:
     legs: list[Leg]
     idle_sol: float
-    entry_cost_sol: float
+    buy_sol: float                  # SOL swapped into the token at entry (cost from a live quote)
     info: dict[str, Any]
 
 
@@ -105,7 +108,7 @@ class ToppedBid(Strategy):
         if not sig:
             return None
         legs = [Leg("A", bid_ask(c.price, 0.45, 0.95, c.step, capital_sol * 0.9, "bid"))]
-        return Plan(legs, idle_sol=capital_sol * 0.1, entry_cost_sol=0.0, info=sig)
+        return Plan(legs, idle_sol=capital_sol * 0.1, buy_sol=0.0, info=sig)
 
 
 class Meridian(Strategy):
@@ -122,7 +125,7 @@ class Meridian(Strategy):
         if c.fee_tvl_1h < 0.5 or fv is None or fv < 1.0 or ch is None or not (-0.15 <= ch <= 0.30):
             return None
         legs = [Leg("A", bid_bins_below(c.price, 69, c.step, capital_sol))]
-        return Plan(legs, idle_sol=0.0, entry_cost_sol=0.0, info={"fee_velocity": fv, "change_1h": ch})
+        return Plan(legs, idle_sol=0.0, buy_sol=0.0, info={"fee_velocity": fv, "change_1h": ch})
 
 
 class ChopSpot(Strategy):
@@ -141,11 +144,9 @@ class ChopSpot(Strategy):
             return None
         width = 2 * st["vol"] * math.sqrt(12)                    # +/- 2 sigma over ~1 h
         n = max(5, min(34, round(math.log(1 + width) / math.log(1 + c.step))))
-        half = capital_sol / 2
-        cost = half * (c.base_fee_pct / 100 + SLIPPAGE_ENTRY)    # swap half the SOL into the token
-        tokens = (half - cost) / c.price
-        legs = [Leg("S", spot_two_sided(c.price, n, c.step, half, tokens))]
-        return Plan(legs, idle_sol=0.0, entry_cost_sol=cost, info={**st, "fee_velocity": fv, "bins_each_side": n})
+        half = capital_sol / 2                                   # half the SOL is swapped into the token
+        legs = [Leg("S", spot_two_sided(c.price, n, c.step, half, half / c.price))]
+        return Plan(legs, idle_sol=0.0, buy_sol=half, info={**st, "fee_velocity": fv, "bins_each_side": n})
 
     def rank(self, c: Candidate) -> float:
         return (chop_stats(c.bars)["chop"] or 0) * c.fee_tvl_1h
@@ -156,15 +157,15 @@ def old_enough(c: Candidate, hours: float = 24) -> bool:
 
 
 def grid_plan(c: Candidate, capital_sol: float, sigmas: float, info: dict[str, Any]) -> Plan | None:
+    """Two-sided spot close to the price: that is where the swaps (and the fees) happen."""
     st = chop_stats(c.bars)
     if not st["vol"]:
         return None
     width = sigmas * st["vol"] * math.sqrt(12)
-    n = max(8, min(34, round(math.log(1 + width) / math.log(1 + c.step))))
+    n = max(6, min(20, round(math.log(1 + width) / math.log(1 + c.step))))
     half = capital_sol / 2
-    cost = half * (c.base_fee_pct / 100 + SLIPPAGE_ENTRY)
-    legs = [Leg("G", grid_bid_ask(c.price, n, c.step, half, (half - cost) / c.price))]
-    return Plan(legs, idle_sol=0.0, entry_cost_sol=cost, info={**info, "vol": st["vol"], "bins_each_side": n})
+    legs = [Leg("G", spot_two_sided(c.price, n, c.step, half, half / c.price))]
+    return Plan(legs, idle_sol=0.0, buy_sol=half, info={**info, "vol": st["vol"], "bins_each_side": n})
 
 
 class ToppedBidV2(ToppedBid):
@@ -189,7 +190,7 @@ class EvilPanda(Strategy):
         if ch is None or ch < 0.10:                  # Evil Panda scanner: the coin is pumping (+10% in 1 h)
             return None
         legs = [Leg("A", bid_ask(c.price, 0.10, 0.40, c.step, capital_sol, "bid"))]
-        return Plan(legs, idle_sol=0.0, entry_cost_sol=0.0, info={"change_1h": ch})
+        return Plan(legs, idle_sol=0.0, buy_sol=0.0, info={"change_1h": ch})
 
 
 class Grid(Strategy):
@@ -206,7 +207,7 @@ class Grid(Strategy):
             return None
         if fv is None or fv < 0.8:
             return None
-        return grid_plan(c, capital_sol, 3, {"trend": st["trend"], "fee_velocity": fv})
+        return grid_plan(c, capital_sol, 1.5, {"trend": st["trend"], "fee_velocity": fv})
 
     def rank(self, c: Candidate) -> float:
         return (chop_stats(c.bars)["chop"] or 1) * c.fee_tvl_1h
@@ -223,7 +224,7 @@ class FeeLeader(Strategy):
             return None
         if c.fee_tvl_1h < 2.0 or c.fees_1h < 1_000:
             return None
-        return grid_plan(c, capital_sol, 3, {"fee_tvl_1h": c.fee_tvl_1h, "token_age_h": c.token_age_h})
+        return grid_plan(c, capital_sol, 1.5, {"fee_tvl_1h": c.fee_tvl_1h, "token_age_h": c.token_age_h})
 
 
 STRATEGIES: list[Strategy] = [ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(), FeeLeader()]

@@ -59,7 +59,7 @@ def test_chop_spot_two_sided() -> None:
     for x in zig[-3:]:
         x.fees = 30.0
     plan = s.entry(cand(price=1.0, bars=zig), 1.0)
-    assert plan and plan.entry_cost_sol > 0
+    assert plan and plan.buy_sol == 0.5
     sides = {b.side for b in plan.legs[0].bins}
     assert sides == {"bid", "ask"}
 
@@ -83,6 +83,7 @@ def test_new_strategies_filters() -> None:
     leader = cand(bars=zig, fee_tvl_1h=5.0, fees_1h=5_000, token_age_h=2, mcap=100_000)
     plan = BY_NAME["fee_leader"].entry(leader, 1.0)
     assert plan and {b.side for b in plan.legs[0].bins} == {"bid", "ask"}       # no age or mcap floor
+    assert len(plan.legs[0].bins) <= 40 and plan.buy_sol == 0.5                    # spot, close to the price
     assert BY_NAME["fee_leader"].entry(cand(bars=zig, fee_tvl_1h=1.0), 1.0) is None
     pump = bars_from([1.0] * 20 + [1.0 + 0.05 * i for i in range(1, 11)] + [1.5] * 3)
     assert BY_NAME["topped_bid_v2"].entry(cand(price=1.2, bars=pump, token_age_h=5), 1.0) is None

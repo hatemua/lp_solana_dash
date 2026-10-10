@@ -50,7 +50,7 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
              SELECT DISTINCT ON (pool) pool, ts, price, tvl, fees_1h, fee_tvl_1h FROM pool_stats
              WHERE ts > now() - interval '3 minutes' ORDER BY pool, ts DESC)
            SELECT s.*, p.name, p.bin_step, p.base_fee_pct, t.mcap, t.holders, t.organic_score, t.audit,
-                  extract(epoch FROM now() - t.created_at) / 3600 AS token_age_h
+                  extract(epoch FROM now() - t.created_at) / 3600 AS token_age_h, t.mint, t.decimals
            FROM s JOIN pools p ON p.address = s.pool JOIN tokens t ON t.mint = p.token_x
            WHERE p.token_y = $1 AND s.tvl >= $2 AND s.fees_1h >= $3 AND s.price > 0""",
         SOL_MINT, min_tvl, min_fees_1h)
@@ -63,7 +63,8 @@ async def candidates(db: asyncpg.Pool, min_tvl: float, min_fees_1h: float) -> li
                              organic=r["organic_score"] or 0, top10=a.get("topHoldersPercentage") or 100,
                              mint_off=bool(a.get("mintAuthorityDisabled")),
                              freeze_off=bool(a.get("freezeAuthorityDisabled")),
-                             token_age_h=float(r["token_age_h"]) if r["token_age_h"] is not None else None))
+                             token_age_h=float(r["token_age_h"]) if r["token_age_h"] is not None else None,
+                             mint=r["mint"], decimals=r["decimals"] if r["decimals"] is not None else 6))
     if out:
         bars: dict[str, list[Bar]] = {}
         for r in await db.fetch("SELECT pool, extract(epoch FROM ts)::float t, high, low, close, fees "
