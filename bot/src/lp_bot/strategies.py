@@ -332,7 +332,8 @@ def bid_screen(c: Candidate) -> list[str]:
         bad.append("fees")
     if not (10_000 <= c.tvl <= 300_000):
         bad.append("tvl")
-    if not (c.mint_off and c.freeze_off) or c.mcap < 250_000 or c.holders < 500 or c.top10 > 30             or c.bot_holders_pct > 30:
+    token_ok = c.mint_off and c.freeze_off and c.mcap >= 250_000 and c.holders >= 500 and c.top10 <= 30
+    if not token_ok or c.bot_holders_pct > 30:
         bad.append("token")
     return bad
 
