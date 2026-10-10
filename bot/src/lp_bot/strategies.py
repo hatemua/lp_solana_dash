@@ -332,8 +332,8 @@ def bid_screen(c: Candidate) -> list[str]:
     bad = []
     if c.fee_tvl_1h < 2.0:
         bad.append("fees")
-    if not (10_000 <= c.tvl <= 300_000):
-        bad.append("tvl")
+    if not (25_000 <= c.tvl <= 300_000):
+        bad.append("tvl")                      # >= $25k: tiny pools are the easiest to rug (SPACEXSI, $14k)
     token_ok = c.mint_off and c.freeze_off and c.mcap >= 250_000 and c.holders >= 500 and c.top10 <= 30
     if not token_ok or c.bot_holders_pct > 30:
         bad.append("token")
