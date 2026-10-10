@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { handle } from "../src/server.js";
 
 const TOKEN = "t".repeat(32);
+const OAUTH = "o".repeat(43);
 const POOL = "57JmG2uos4wGFtBuerGS2azHEPBBnp8FJRgeLmnx8uXV";
 
 async function listen(fn: RequestListener): Promise<{ srv: Server; url: string }> {
@@ -30,13 +31,22 @@ async function rpc(url: string, body: unknown, token = TOKEN): Promise<{ status:
 test("streamable HTTP: auth, tools/list and a tool call through a fake API", async () => {
   const seen: string[] = [];
   const fakeApi = await listen((req, res) => {
+    if (req.url === "/v1/auth/me") {
+      const ok = req.headers.authorization === `Bearer ${OAUTH}`;
+      res.writeHead(ok ? 200 : 401, { "content-type": "application/json" });
+      return res.end(JSON.stringify(ok ? { via: "oauth", scope: "mcp:read", user: { id: 1, email: "a@b.co" } } : {}));
+    }
     seen.push(`${req.method} ${req.url} ${req.headers["x-forwarded-for"]}`);
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ address: "p", tvl: 1 }));
   });
   const mcp = await listen((req, res) => void handle(req, res, TOKEN, fakeApi.url));
   try {
     assert.equal((await fetch(`${mcp.url}/health`)).status, 200);
-    assert.equal((await rpc(mcp.url, {}, "wrong")).status, 401);
+    const denied = await fetch(`${mcp.url}/mcp`, { method: "POST", headers: { authorization: `Bearer ${"x".repeat(43)}` } });
+    assert.equal(denied.status, 401);
+    assert.match(denied.headers.get("www-authenticate") ?? "", /resource_metadata="[^"]+\/\.well-known\/oauth-protected-resource\/mcp"/);
+    const viaOAuth = await rpc(mcp.url, { jsonrpc: "2.0", id: 0, method: "tools/list", params: {} }, OAUTH);
+    assert.equal(viaOAuth.status, 200);
     assert.equal((await fetch(`${mcp.url}/mcp`, { headers: { authorization: `Bearer ${TOKEN}` } })).status, 405);
 
     const init = await rpc(mcp.url, {

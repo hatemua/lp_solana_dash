@@ -18,6 +18,7 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from . import auth
 from . import signals as S
 from .config import Settings, get_settings
 from .filters import PRESETS, FilterError, build_query
@@ -70,7 +71,12 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
         state.update(engine=engine, redis=redis, client=client,
                      limiter=RateLimiter(redis, cfg.rate_limit_per_min),
-                     tx_limiter=RateLimiter(redis, cfg.tx_rate_limit_per_min, prefix="rl:tx"))
+                     tx_limiter=RateLimiter(redis, cfg.tx_rate_limit_per_min, prefix="rl:tx"),
+                     auth_limiter=RateLimiter(redis, cfg.auth_rate_limit_per_min, prefix="rl:auth"))
+        try:
+            await auth.ensure_schema(engine)
+        except Exception:                       # DB not up yet: the auth routes fail until a restart, data still served
+            log.exception("could not create the auth tables")
         yield
         await client.aclose()
         await redis.aclose()
@@ -79,17 +85,20 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
     app = FastAPI(title="LP Solana Dash API", version="0.1.0", lifespan=lifespan,
                   docs_url="/v1/docs", openapi_url="/v1/openapi.json", redoc_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=cfg.cors_origins, allow_methods=["GET", "POST"],
-                       allow_headers=["*"], allow_credentials=False)
+                       allow_headers=["*"], allow_credentials=True)  # session cookie for the web app
 
     def client_ip(request: Request) -> str:
         fwd = request.headers.get("x-forwarded-for")
         return fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "?")
 
+    AUTH_PATHS = {"/v1/auth/login", "/v1/auth/signup", "/oauth/token", "/oauth/register"}
+
     @app.middleware("http")
     async def rate_limit(request: Request, call_next: Any) -> Any:
         path = request.url.path
-        if path.startswith("/v1/") and path != "/v1/stream" and "limiter" in state:
-            limiter = state["tx_limiter"] if path.startswith("/v1/tx/") else state["limiter"]
+        if "limiter" in state and (path in AUTH_PATHS or (path.startswith("/v1/") and path != "/v1/stream")):
+            limiter = (state["auth_limiter"] if path in AUTH_PATHS
+                       else state["tx_limiter"] if path.startswith("/v1/tx/") else state["limiter"])
             ok, retry = await limiter.hit(client_ip(request))
             if not ok:
                 return JSONResponse({"error": "rate limit exceeded"}, status_code=429,
@@ -110,6 +119,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         if r.status_code >= 400:
             raise HTTPException(r.status_code if r.status_code < 500 else 502, r.json().get("error", "executor error"))
         return r.json()
+
+    app.include_router(auth.router(cfg, state))
 
     # ------------------------------------------------------------------ health
     @app.get("/health")

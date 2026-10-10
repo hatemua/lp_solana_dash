@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ReactNode } from "react";
 import { Providers } from "./providers";
 import { WalletButton } from "@/components/WalletButton";
+import { AccountButton } from "@/components/Account";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,7 +26,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                 <Link href="/wallet" className="hover:text-slate-100">My positions</Link>
                 <Link href="/bot" className="hover:text-slate-100">Bot</Link>
               </nav>
-              <div className="ml-auto">
+              <div className="ml-auto flex items-center gap-4">
+                <AccountButton />
                 <WalletButton />
               </div>
             </div>

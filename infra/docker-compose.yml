@@ -69,6 +69,9 @@ services:
       EXECUTOR_URL: http://executor:8200
       INDEXER_HEALTH_URL: http://indexer:8001/health
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-https://lp.joulity.com}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://lp.api.joulity.com}
+      WEB_URL: ${WEB_URL:-https://lp.joulity.com}
+      SIGNUP_OPEN: ${SIGNUP_OPEN:-true}
     ports:
       - "127.0.0.1:8000:8000"   # nginx (host) terminates TLS for lp.api.joulity.com
     networks: [internal]
@@ -81,6 +84,19 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"   # nginx (host) terminates TLS for lp.joulity.com
+    networks: [internal]
+
+  mcp:
+    build: ../mcp
+    restart: unless-stopped
+    depends_on: [api]
+    environment:
+      MCP_PORT: 8100
+      API_URL: http://api:8000
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://lp.api.joulity.com}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}   # optional static token for scripts; OAuth is the normal way in
+    ports:
+      - "127.0.0.1:8100:8100"   # nginx (host) serves it at https://lp.api.joulity.com/mcp
     networks: [internal]
 
 volumes:

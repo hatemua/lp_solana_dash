@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { age, num, pct, price, shortAddr, usd } from "../src/lib/format.ts";
+import { safeNext } from "../src/lib/auth.ts";
 import { amountsFor, binsFor, priceAt, rangeFor } from "../src/lib/range.ts";
 
 test("usd and pct formatting", () => {
@@ -49,4 +50,16 @@ test("amountsFor splits 50/50 by value", () => {
   const both = amountsFor("both", 0.2, true, 0.001);
   assert.equal(both.y, 0.1);
   assert.ok(Math.abs(both.x - 100) < 1e-9);       // 0.1 SOL of a token worth 0.001 SOL = 100 tokens
+});
+
+test("login redirect only goes to our OAuth authorize URL or a local path", () => {
+  const api = "https://lp.api.joulity.com";
+  const authz = `${api}/oauth/authorize?client_id=x&state=y`;
+  assert.equal(safeNext(authz, api), authz);
+  assert.equal(safeNext("/account", api), "/account");
+  assert.equal(safeNext(null, api), "/account");
+  assert.equal(safeNext("https://evil.example/oauth/authorize?x", api), "/account");
+  assert.equal(safeNext("//evil.example", api), "/account");
+  assert.equal(safeNext(`${api}.evil.example/oauth/authorize?x`, api), "/account");
+  assert.equal(safeNext("javascript:alert(1)", api), "/account");
 });

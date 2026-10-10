@@ -2,12 +2,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { apiClient, ApiError, type Api } from "./api.js";
-import { bearerOk } from "./auth.js";
+import { bearerOk, oauthUser } from "./auth.js";
 import { TOOLS } from "./tools.js";
 
 const PORT = Number(process.env.MCP_PORT ?? 8100);
 const API_URL = (process.env.API_URL ?? "http://api:8000").replace(/\/$/, "");
-const TOKEN = process.env.MCP_BEARER_TOKEN ?? "";
+const TOKEN = process.env.MCP_BEARER_TOKEN ?? ""; // optional static token; OAuth is the normal way in
+const PUBLIC_URL = (process.env.PUBLIC_API_URL ?? "https://lp.api.joulity.com").replace(/\/$/, "");
 const VERSION = "0.1.0";
 
 const INSTRUCTIONS =
@@ -50,12 +51,25 @@ function clientIp(req: IncomingMessage): string | undefined {
   return first || req.socket.remoteAddress || undefined;
 }
 
-export async function handle(req: IncomingMessage, res: ServerResponse, token = TOKEN, apiUrl = API_URL) {
+export async function handle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  token = TOKEN,
+  apiUrl = API_URL,
+  publicUrl = PUBLIC_URL,
+) {
   const path = (req.url ?? "/").split("?")[0];
   if (path === "/health") return send(res, 200, { ok: true, version: VERSION, tools: TOOLS.length });
   if (path !== "/mcp") return send(res, 404, { error: "not found" });
-  if (!bearerOk(req.headers.authorization, token)) {
-    return send(res, 401, { error: "missing or invalid bearer token" }, { "www-authenticate": "Bearer" });
+  // OAuth access token (claude.ai, Claude Desktop, Claude Code) or the optional static token (scripts)
+  const authed =
+    bearerOk(req.headers.authorization, token) ||
+    (await oauthUser(req.headers.authorization, apiUrl, clientIp(req))) !== null;
+  if (!authed) {
+    const meta = `${publicUrl}/.well-known/oauth-protected-resource/mcp`;
+    return send(res, 401, { error: "invalid_token", error_description: "sign in with OAuth" }, {
+      "www-authenticate": `Bearer resource_metadata="${meta}", scope="mcp:read"`,
+    });
   }
   if (req.method !== "POST") {
     // stateless server: no standalone SSE stream and no sessions to delete
@@ -81,8 +95,8 @@ export async function handle(req: IncomingMessage, res: ServerResponse, token = 
 }
 
 if (process.argv[1]?.endsWith("server.js")) {
-  if (TOKEN.length < 24) {
-    console.error("MCP_BEARER_TOKEN must be set (>= 24 chars); refusing to start without auth");
+  if (TOKEN && TOKEN.length < 24) {
+    console.error("MCP_BEARER_TOKEN is too short (>= 24 chars) or leave it empty for OAuth only");
     process.exit(1);
   }
   createServer((req, res) => void handle(req, res)).listen(PORT, "0.0.0.0", () =>
