@@ -34,6 +34,7 @@ class Position:
     last_ts: float = 0.0
     last_price: float = 0.0
     fee_log: deque = field(default_factory=lambda: deque(maxlen=30))     # our fees (SOL) per minute
+    px_log: deque = field(default_factory=lambda: deque(maxlen=60))      # (ts, price) for the crash exit
     info: dict[str, Any] = field(default_factory=dict)
     id: int | None = None
 
@@ -59,6 +60,7 @@ class Position:
         earned = fee_share(self.legs, prev, price, self.step, pool_fees_usd * LP_SHARE, sol_usd, others_usd) / sol_usd
         self.fees_sol += earned
         self.fee_log.append(earned)
+        self.px_log.append((ts, price))
         self.last_ts, self.last_price = ts, price
 
         if rules.flip and not self.flipped:
@@ -82,6 +84,12 @@ class Position:
             return "trailing"
         if net <= rules.stop:
             return "stop"
+        if rules.crash_pct is not None:
+            recent = [px for t, px in self.px_log if t >= ts - rules.crash_window_min * 60]
+            if recent and (price / max(recent) - 1) * 100 <= rules.crash_pct:
+                return "crash"
+        if rules.flip_stop and self.flipped and self.low_since_fill and price < self.low_since_fill:
+            return "flip_failed"
         if self.out_below >= rules.out_below_min:
             return "out_below"
         if self.out_above >= rules.out_above_min:
@@ -131,7 +139,7 @@ class Position:
                 "costs_sol": self.costs_sol, "peak_net": self.peak_net, "trail_on": self.trail_on,
                 "low_since_fill": self.low_since_fill, "flipped": self.flipped, "out_below": self.out_below,
                 "out_above": self.out_above, "last_ts": self.last_ts, "last_price": self.last_price,
-                "fee_log": list(self.fee_log), "info": self.info, "step": self.step, "sell_cost": self.sell_cost,
+                "fee_log": list(self.fee_log), "px_log": [list(x) for x in self.px_log], "info": self.info, "step": self.step, "sell_cost": self.sell_cost,
                 "capital_sol": self.capital_sol}
 
     @staticmethod
@@ -144,4 +152,6 @@ class Position:
                         costs_sol=s["costs_sol"], peak_net=s["peak_net"], trail_on=s["trail_on"],
                         low_since_fill=s["low_since_fill"], flipped=s["flipped"], out_below=s["out_below"],
                         out_above=s["out_above"], last_ts=s["last_ts"], last_price=s["last_price"],
-                        fee_log=deque(s["fee_log"], maxlen=30), info=s["info"], id=row["id"])
+                        fee_log=deque(s["fee_log"], maxlen=30),
+                        px_log=deque((tuple(x) for x in s.get("px_log", [])), maxlen=60), info=s["info"],
+                        id=row["id"])

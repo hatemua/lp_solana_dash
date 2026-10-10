@@ -62,3 +62,31 @@ def test_chop_spot_two_sided() -> None:
     assert plan and plan.entry_cost_sol > 0
     sides = {b.side for b in plan.legs[0].bins}
     assert sides == {"bid", "ask"}
+
+
+def test_grid_bid_ask_two_sided_weights() -> None:
+    from lp_bot.sim import Leg, grid_bid_ask
+
+    leg = Leg("G", grid_bid_ask(1.0, 10, 0.01, sol_amount=1.0, tok_amount=2.0))
+    bids = sorted((b for b in leg.bins if b.side == "bid"), key=lambda b: -b.price)
+    asks = sorted((b for b in leg.bins if b.side == "ask"), key=lambda b: b.price)
+    assert abs(sum(b.sol for b in bids) - 1.0) < 1e-12 and abs(sum(b.tok for b in asks) - 2.0) < 1e-12
+    assert bids[-1].sol > bids[0].sol and asks[-1].tok > asks[0].tok           # more liquidity far from the price
+
+
+def test_new_strategies_filters() -> None:
+    zig = bars_from([1.0, 1.03] * 8)
+    for x in zig[-3:]:
+        x.fees = 30.0
+    young, old = cand(bars=zig, token_age_h=3), cand(bars=zig, token_age_h=100)
+    assert BY_NAME["grid"].entry(young, 1.0) is None and BY_NAME["grid"].entry(old, 1.0)
+    leader = cand(bars=zig, fee_tvl_1h=5.0, fees_1h=5_000, token_age_h=2, mcap=100_000)
+    plan = BY_NAME["fee_leader"].entry(leader, 1.0)
+    assert plan and {b.side for b in plan.legs[0].bins} == {"bid", "ask"}       # no age or mcap floor
+    assert BY_NAME["fee_leader"].entry(cand(bars=zig, fee_tvl_1h=1.0), 1.0) is None
+    pump = bars_from([1.0] * 20 + [1.0 + 0.05 * i for i in range(1, 11)] + [1.5] * 3)
+    assert BY_NAME["topped_bid_v2"].entry(cand(price=1.2, bars=pump, token_age_h=5), 1.0) is None
+    assert BY_NAME["topped_bid_v2"].entry(cand(price=1.2, bars=pump, token_age_h=50), 1.0)
+    rising = bars_from([1.0] * 20 + [1.0 + 0.02 * i for i in range(1, 13)])
+    ep = BY_NAME["evil_panda"].entry(cand(price=1.24, bars=rising, token_age_h=100), 1.0)
+    assert ep and ep.legs[0].highest() < 1.24 * 0.41 and ep.legs[0].lowest() > 1.24 * 0.09

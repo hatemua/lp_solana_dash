@@ -47,12 +47,21 @@ class Others:
         return self.usd[j] if abs(self.prices[j] / price - 1) < self.step else 0.0
 
 
+_BINS: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
 async def live_bins(client: httpx.AsyncClient, cfg: Settings, pool: str) -> list[dict[str, Any]] | None:
+    hit = _BINS.get(pool)
+    if hit and time.time() - hit[0] < 110:          # executor reads the chain via a public RPC: 2 min cache
+        return hit[1]
     try:
         n = cfg.live_bins_each_side
         r = await client.get(f"{cfg.executor_url}/v1/pools/{pool}/bins", params={"left": n, "right": n})
         if r.status_code == 200:
-            return r.json().get("bins")
+            bins = r.json().get("bins")
+            if bins:
+                _BINS[pool] = (time.time(), bins)
+            return bins
     except httpx.HTTPError as e:
         log.debug("live bins %s: %s", pool, e)
     return None

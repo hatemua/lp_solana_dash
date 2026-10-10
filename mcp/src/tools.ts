@@ -184,7 +184,7 @@ export const TOOLS: ToolDef[] = [
     title: "Paper bot status",
     description:
       "Paper LP bot (virtual $100 positions on live pool data, no wallet): heartbeat and, per strategy " +
-      "(topped_bid, meridian, chop_spot), open/closed counts, win rate, realized and unrealized P&L, fees, costs " +
+      "(S1–S6), open/closed counts, win rate, realized and unrealized P&L, fees, costs " +
       "and the equity curve.",
     input: {},
     run: (api) => api.get("/v1/bot/status"),
@@ -195,7 +195,9 @@ export const TOOLS: ToolDef[] = [
     description: "Positions of the paper LP bot: pool, range, entry/last price, net %, P&L, fees, costs, exit reason.",
     input: {
       status: z.enum(["open", "closed", "all"]).default("open"),
-      strategy: z.enum(["topped_bid", "meridian", "chop_spot"]).optional(),
+      strategy: z
+        .enum(["topped_bid", "meridian", "chop_spot", "topped_bid_v2", "evil_panda", "grid", "fee_leader"])
+        .optional(),
       limit: z.number().int().min(1).max(200).default(30),
     },
     run: (api, a) => api.get("/v1/bot/positions", { status: a.status, strategy: a.strategy, limit: a.limit }),

@@ -52,7 +52,10 @@ interface BotPosition {
   legs: string | null;
 }
 
-const SHORT: Record<string, string> = { topped_bid: "S1", meridian: "S2", chop_spot: "S3" };
+const SHORT: Record<string, string> = {
+  topped_bid: "S1", meridian: "S2", chop_spot: "S3", topped_bid_v2: "S1b", evil_panda: "S4", grid: "S5",
+  fee_leader: "S6",
+};
 
 function since(ts: string, until?: string | null): string {
   const ms = (until ? new Date(until).getTime() : Date.now()) - new Date(ts).getTime();
@@ -126,13 +129,13 @@ export function BotView() {
       </div>
       {error && <p className="text-sm text-neg">{error}</p>}
       <p className="text-sm text-mut">
-        Three strategies run side by side on live Meteora data, ${status?.position_usd ?? 100} per position, up to{" "}
+        The strategies run side by side on live Meteora data, ${status?.position_usd ?? 100} per position, up to{" "}
         {status?.max_open_per_strategy ?? 3} open each. Fees come from each pool&apos;s real per-minute fees and our share
         of the bin liquidity. Rules: <Link className="text-acc hover:underline"
           href="https://github.com/hatemua/lp_solana_dash/blob/m3-bot/docs/research/strategy-playbook.md">playbook</Link>.
       </p>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {status?.strategies.map((s) => (
           <button
             key={s.strategy}

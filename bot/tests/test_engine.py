@@ -66,3 +66,18 @@ def test_state_roundtrip() -> None:
            "entry_price": 1.0, "state": p.state(), "id": 7}
     q = Position.from_row(row)
     assert q.id == 7 and abs(q.net_pct(0.9) - p.net_pct(0.9)) < 1e-12
+
+
+def test_crash_exit_and_failed_flip() -> None:
+    p = pos()
+    rules = ExitRules(crash_pct=-25, crash_window_min=30, stop=-99, out_below_min=999)
+    assert p.step_minute(60, 0.99, 0.0, SOL_USD, nobody, rules) is None
+    assert p.step_minute(120, 0.70, 0.0, SOL_USD, nobody, rules) == "crash"        # -29% within 30 min
+    q = pos()
+    rules = ExitRules(flip=True, flip_stop=True, stop=-99, out_below_min=999)
+    t = 0
+    for price in [0.8, 0.6, 0.5, 0.46, 0.46 * 1.06]:                                # fill, then +6% bounce: flip
+        t += 60
+        q.step_minute(t, price, 0.0, SOL_USD, nobody, rules)
+    assert q.flipped
+    assert q.step_minute(t + 60, 0.45, 0.0, SOL_USD, nobody, rules) == "flip_failed"

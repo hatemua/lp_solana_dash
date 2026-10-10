@@ -104,6 +104,16 @@ def spot_two_sided(p0: float, n: int, step: float, sol_amount: float, tok_amount
     return bins
 
 
+def grid_bid_ask(p0: float, n: int, step: float, sol_amount: float, tok_amount: float) -> list[Bin]:
+    """Two-sided bid-ask: buys below and sells above the price, more liquidity the further from the price."""
+    r = 1 + step
+    w = list(range(1, n + 1))
+    tot = sum(w)
+    bins = [Bin(price=p0 / r ** k, sol=sol_amount * k / tot, side="bid") for k in w]
+    bins += [Bin(price=p0 * r ** k, tok=tok_amount * k / tot, side="ask") for k in w]
+    return bins
+
+
 def bins_between(p_a: float, p_b: float, step: float) -> int:
     """Number of pool bins the price touched moving from p_a to p_b (at least the active one)."""
     if p_a <= 0 or p_b <= 0:

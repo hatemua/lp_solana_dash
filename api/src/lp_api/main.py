@@ -381,7 +381,9 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
 
     # ------------------------------------------------------------------ paper bot (M3, read-only views)
     BOT_LABELS = {"topped_bid": "S1 Topped bid + flip", "meridian": "S2 Meridian bid-ask",
-                  "chop_spot": "S3 Chop spot (anti-sawtooth)"}
+                  "chop_spot": "S3 Chop spot (anti-sawtooth)", "topped_bid_v2": "S1b Topped bid v2 (age, crash exit)",
+                  "evil_panda": "S4 Evil Panda deep bid", "grid": "S5 Two-sided grid",
+                  "fee_leader": "S6 Fee leaders (table top)"}
 
     async def bot_rows(sql: str, **params: Any) -> list[dict[str, Any]]:
         try:
