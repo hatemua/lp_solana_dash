@@ -18,7 +18,7 @@ def test_chop_high_when_price_goes_back_and_forth() -> None:
 
 
 def test_fee_velocity_and_changes() -> None:
-    m = S.candle_metrics(candles([1.0] * 12 + [1.1], fees=[1.0] * 12 + [3.0]))
+    m = S.candle_metrics(candles([1.0] * 14 + [1.1], fees=[1.0] * 12 + [3.0, 3.0, 3.0]))
     assert abs((m["fee_velocity"] or 0) - 3.0) < 1e-9
     assert abs((m["change_5m"] or 0) - 0.1) < 1e-9
     assert abs((m["change_1h"] or 0) - 0.1) < 1e-9

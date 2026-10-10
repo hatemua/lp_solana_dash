@@ -36,7 +36,7 @@ class Candle:
 class Metrics:
     fee_tvl_1h: float | None = None
     fees_1h: float | None = None
-    fee_velocity: float | None = None       # last 5 min fees / average 5 min fees of the last hour
+    fee_velocity: float | None = None       # avg 5-min fees of the last 15 min / avg of the hour before
     volume_burst: float | None = None       # 1 h volume / average hour of 24 h
     change_5m: float | None = None
     change_15m: float | None = None
@@ -88,9 +88,11 @@ def candle_metrics(candles: list[Candle]) -> dict[str, float | None]:
     highs_24 = [c.high for c in candles[-288:] if c.high]
     out["from_1h_high"] = _chg(max(highs_1h), last) if highs_1h else None
     out["from_24h_high"] = _chg(max(highs_24), last) if highs_24 else None
-    fees = [c.fees or 0 for c in candles[-13:]]
-    if len(fees) >= 6 and sum(fees[:-1]) > 0:
-        out["fee_velocity"] = fees[-1] / (sum(fees[:-1]) / len(fees[:-1]))
+    # last 15 min vs the hour before: one 5-min bar alone is too noisy (a single quiet bar read as "fees gone")
+    fees = [c.fees or 0 for c in candles[-15:]]
+    recent, before = fees[-3:], fees[:-3]
+    if len(before) >= 4 and sum(before) > 0:
+        out["fee_velocity"] = (sum(recent) / len(recent)) / (sum(before) / len(before))
     if out["chop"] is not None:
         out["chop"] = min(out["chop"], 50.0)
     return out
