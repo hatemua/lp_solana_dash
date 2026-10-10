@@ -133,7 +133,8 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
         for c in sorted(cands, key=s.rank, reverse=True):
             if slots <= 0:
                 break
-            if c.pool in busy or c.name.split("-")[0] in taken_tokens or c.mint in taken_mints                     or _SKIP.get(c.mint, 0) > time.time():
+            cooling = c.mint in taken_mints or _SKIP.get(c.mint, 0) > time.time()
+            if c.pool in busy or c.name.split("-")[0] in taken_tokens or cooling:
                 continue
             plan = s.entry(c, capital_sol)
             if not plan:
