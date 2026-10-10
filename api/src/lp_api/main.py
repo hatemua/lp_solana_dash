@@ -420,7 +420,10 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                             "ORDER BY closed_at")
         by = {a["strategy"]: a for a in agg}
         out = []
+        active = set((hb or {}).get("strategies") or []) | set(by)    # running now, or with positions
         for name, label in BOT_LABELS.items():
+            if active and name not in active:
+                continue
             a = by.get(name, {})
             closed = a.get("closed") or 0
             out.append({"strategy": name, "label": label, "open": a.get("open") or 0, "closed": closed,
