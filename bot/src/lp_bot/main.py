@@ -104,6 +104,8 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
                 tvl30 = (r["tvl"] / old30["tvl"] - 1) if old30 and old30["tvl"] and r["tvl"] else None
                 danger = exit_warning(flow_by_mint.get(p.info.get("mint", "")), tvl30)
             gap = r["t"] - p.last_ts
+            if gap > 600:
+                fees = 0.0                                  # fees earned while we were blind are not ours to count
             reason = p.step_minute(r["t"], r["price"], fees, sol_usd, others, rules, drop, danger)
             if not reason and gap > 600:
                 reason = "data_gap"                         # we were blind > 10 min: close at the first price back
