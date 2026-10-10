@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from .sim import Leg, bid_ask, bid_bins_below, fee_share
+from .sim import Leg, bid_ask, bid_bins_below, even_bids_below, fee_share
 from .strategies import ExitRules
 
 TX_SOL = 0.0002                 # per on-chain action (open, close, flip), incl. priority fee
@@ -115,7 +115,9 @@ class Position:
         """All legs are SOL and the price is above them: rebuild the same ladder right under the new price."""
         sol = sum(lg.sol_held(price) for lg in self.legs)
         n = max(len(lg.bins) for lg in self.legs)
-        self.legs = [Leg("A", bid_bins_below(price, n, self.step, sol))]
+        amounts = [b.sol for lg in self.legs for b in lg.bins if b.sol > 0]
+        even = bool(amounts) and max(amounts) <= min(amounts) * 1.01          # keep the ladder's shape
+        self.legs = [Leg("A", (even_bids_below if even else bid_bins_below)(price, n, self.step, sol))]
         self.out_above = 0
         self.costs_sol += 2 * TX_SOL
         self.info["recenters"] = self.info.get("recenters", 0) + 1

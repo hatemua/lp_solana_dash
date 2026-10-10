@@ -26,7 +26,7 @@ from collections import defaultdict
 
 import asyncpg
 
-from lp_bot.sim import Leg, bid_bins_below, fee_share, spot_two_sided
+from lp_bot.sim import Bin, Leg, bid_bins_below, fee_share, spot_two_sided
 
 SOL = "So11111111111111111111111111111111111111112"
 HOLD_MIN = int(os.environ.get("HOLD_MIN", "60"))
@@ -107,6 +107,8 @@ async def main() -> None:
                 "spot10": Leg("S", spot_two_sided(p0, 10, step, cap / 2, cap / 2 / p0)),
                 "spot25": Leg("S", spot_two_sided(p0, 25, step, cap / 2, cap / 2 / p0)),
                 "bid69": Leg("A", bid_bins_below(p0, 69, step, cap)),
+                "sbid30": Leg("A", [Bin(price=p0 / (1 + step) ** k, sol=cap / 30) for k in range(1, 31)]),
+                "sbid15": Leg("A", [Bin(price=p0 / (1 + step) ** k, sol=cap / 15) for k in range(1, 16)]),
             }
             fees = dict.fromkeys(shapes, 0.0)
             for k in range(i + 1, i + HOLD_MIN + 1):
@@ -132,9 +134,9 @@ async def main() -> None:
                                 "fees": fees[name] / cap * 100, "move": (p1 / p0 - 1) * 100, **feat})
             i += STEP_MIN
 
-    print(f"hold {HOLD_MIN} min, entry every {STEP_MIN} min, {len(results) // 3} entries, "
+    print(f"hold {HOLD_MIN} min, entry every {STEP_MIN} min, {len(results) // 5} entries, "
           f"{len({r['pool'] for r in results})} pools, profile bins {len(profile)}")
-    for shape in ("spot10", "spot25", "bid69"):
+    for shape in ():
         rs = [r for r in results if r["shape"] == shape]
         nets = [r["net"] for r in rs]
         print(f"\n### {shape}: n={len(rs)} win {sum(x > 0 for x in nets) / len(nets):.0%} mean {statistics.mean(nets):+.2f}% "
@@ -204,7 +206,7 @@ async def main() -> None:
     print(f"\n### screens over {hours:.0f} h of data (entries counted every {STEP_MIN} min, hold {HOLD_MIN} min)")
     for name, f in screens.items():
         line = [f"  {name}"]
-        for shape in ("spot10", "spot25", "bid69"):
+        for shape in ("spot10", "spot25", "bid69", "sbid30", "sbid15"):
             sel = [r["net"] for r in results if r["shape"] == shape and f(r)]
             if sel:
                 line.append(f"{shape}: n={len(sel)} ({len(sel) / hours * 24:.0f}/day) win {sum(x > 0 for x in sel) / len(sel):.0%} "

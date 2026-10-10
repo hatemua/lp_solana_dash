@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .signals import Bar, chop_stats, fee_velocity, price_change, topped
-from .sim import Leg, bid_ask, bid_bins_below, spot_two_sided
+from .sim import Leg, bid_ask, bid_bins_below, even_bids_below, spot_two_sided
 
 SELL_COST_ESTIMATE = 0.015         # marks open positions; the exit uses a real Jupiter quote
 
@@ -340,7 +340,7 @@ def bid_screen(c: Candidate) -> list[str]:
 
 class ProBid(Strategy):
     name = "pro_bid"
-    label = "P3 SOL bid-ask, fee/TVL >= 2% (trails up)"
+    label = "P3 SOL bids, even 30 bins, fee/TVL >= 2% (trails up)"
     rules = ExitRules(take_profit=5, trail_trigger=3, trail_drop=1.5, stop=-12, out_below_min=30, out_above_min=5,
                       max_hours=4, crash_pct=-20, crash_window_min=30, fee_death_min=30, recenter_above=True,
                       cooldown_min=30)
@@ -348,7 +348,8 @@ class ProBid(Strategy):
     def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
         if bid_screen(c):
             return None
-        legs = [Leg("A", bid_bins_below(c.price, 69, c.step, capital_sol))]
+        # replay: even 30 bins below beat bid-ask 69 bins (median +1.05% vs +0.16% per position)
+        legs = [Leg("A", even_bids_below(c.price, 30, c.step, capital_sol))]
         return Plan(legs, idle_sol=0.0, buy_sol=0.0, info={"fee_tvl_1h": c.fee_tvl_1h, "fees_1h": c.fees_1h,
                                                             "token_age_h": c.token_age_h})
 

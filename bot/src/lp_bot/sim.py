@@ -96,6 +96,12 @@ def bid_bins_below(p0: float, n: int, step: float, amount: float) -> list[Bin]:
     return [Bin(price=p0 / r ** k, sol=amount * wi / tot, side="bid") for k, wi in zip(range(1, n + 1), w, strict=True)]
 
 
+def even_bids_below(p0: float, n: int, step: float, amount: float) -> list[Bin]:
+    """SOL spread evenly over the n bins right below the price (keeps liquidity close to where trades happen)."""
+    r = 1 + step
+    return [Bin(price=p0 / r ** k, sol=amount / n, side="bid") for k in range(1, n + 1)]
+
+
 def spot_two_sided(p0: float, n: int, step: float, sol_amount: float, tok_amount: float) -> list[Bin]:
     """Spot (uniform) around the price: SOL in n bins below, tokens in n bins above."""
     r = 1 + step

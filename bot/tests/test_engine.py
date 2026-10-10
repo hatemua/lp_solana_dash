@@ -103,3 +103,15 @@ def test_rabbit_sells_into_the_pump() -> None:
     assert p.step_minute(60, 1.15, 0.0, SOL_USD, nobody, rules) is None     # part sold, part still held
     assert p.step_minute(120, 1.31, 0.0, SOL_USD, nobody, rules) == "sold_out"
     assert p.net_pct(1.31) > 15                                             # sold between +1% and +30%
+
+
+def test_recenter_keeps_even_shape() -> None:
+    from lp_bot.sim import even_bids_below
+
+    p = Position(strategy="pro_bid", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.015, legs=[Leg("A", even_bids_below(1.0, 30, STEP, 1.0))], last_price=1.0)
+    rules = ExitRules(out_above_min=2, recenter_above=True)
+    p.step_minute(60, 1.1, 0.0, SOL_USD, nobody, rules)
+    p.step_minute(120, 1.1, 0.0, SOL_USD, nobody, rules)
+    sols = [b.sol for b in p.legs[0].bins]
+    assert p.info["recenters"] == 1 and len(sols) == 30 and max(sols) - min(sols) < 1e-12
