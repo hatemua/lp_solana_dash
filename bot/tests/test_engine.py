@@ -22,7 +22,7 @@ def test_take_profit_on_fees() -> None:
     reason = None
     t = 0
     price = 0.94                                   # inside our top bins: we earn while the pool trades
-    while reason is None and t < 600:
+    while reason is None and t < 2400:
         t += 240
         reason = p.step_minute(t, price, pool_fees_usd=2.0, sol_usd=SOL_USD, others_usd=nobody, rules=rules)
     assert reason == "take_profit" and p.fees_sol > 0

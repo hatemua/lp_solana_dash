@@ -9,7 +9,8 @@
 
 from dataclasses import dataclass
 
-CRASH_EXITS = ("crash", "fast_drop", "rug", "sell_pressure", "stop", "flip_failed")
+CRASH_EXITS = ("crash", "fast_drop", "rug", "sell_pressure", "dumping", "lp_exodus", "holders_leaving", "stop",
+               "flip_failed")
 
 
 @dataclass
@@ -46,6 +47,19 @@ def exit_pressure(flow: TokenFlow | None) -> bool:
         return False
     return (flow.buy5m + flow.sell5m >= 2_000 and flow.sell5m > 3.0 * max(flow.buy5m, 1.0)
             and flow.chg5m_pct <= -5)
+
+
+def exit_warning(flow: TokenFlow | None, tvl_change_30m: float | None) -> str | None:
+    """In position: early signs that a crash is starting (exit while holding the token, before the stop)."""
+    if exit_pressure(flow):
+        return "sell_pressure"
+    if flow is not None and flow.chg5m_pct is not None and flow.chg5m_pct <= -8:
+        return "dumping"
+    if tvl_change_30m is not None and tvl_change_30m <= -0.20:
+        return "lp_exodus"
+    if flow is not None and flow.holder_change_1h_pct is not None and flow.holder_change_1h_pct <= -3:
+        return "holders_leaving"
+    return None
 
 
 def portfolio_pause(day_pnl_usd: float, loss_limit_usd: float, sol_chg1h_pct: float | None) -> str | None:

@@ -17,9 +17,9 @@ import httpx
 from redis.asyncio import Redis
 
 from . import jupiter, store
-from .guards import entry_guard, exit_pressure, portfolio_pause
 from .config import Settings, get_settings
 from .engine import TX_SOL, Position
+from .guards import entry_guard, exit_warning, portfolio_pause
 from .strategies import BY_NAME, Strategy
 
 log = logging.getLogger("lp_bot")
@@ -98,8 +98,12 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
             drop = (r["tvl"] / old["tvl"] - 1) if old and old["tvl"] and r["tvl"] else None
             if not r["price"]:
                 continue
-            pressure = r is new[-1] and exit_pressure(flow_by_mint.get(p.info.get("mint", "")))
-            reason = p.step_minute(r["t"], r["price"], fees, sol_usd, others, rules, drop, pressure)
+            danger = None
+            if r is new[-1]:                                # warnings use the latest token stats and TVL
+                old30 = next((x for x in rows if x["t"] >= r["t"] - 30 * 60), None)
+                tvl30 = (r["tvl"] / old30["tvl"] - 1) if old30 and old30["tvl"] and r["tvl"] else None
+                danger = exit_warning(flow_by_mint.get(p.info.get("mint", "")), tvl30)
+            reason = p.step_minute(r["t"], r["price"], fees, sol_usd, others, rules, drop, danger)
             if reason:
                 break
         if reason:

@@ -1,5 +1,5 @@
 from lp_bot.engine import Position
-from lp_bot.guards import TokenFlow, entry_guard, exit_pressure, portfolio_pause
+from lp_bot.guards import TokenFlow, entry_guard, exit_pressure, exit_warning, portfolio_pause
 from lp_bot.sim import Leg, spot_two_sided
 from lp_bot.strategies import ExitRules
 
@@ -42,4 +42,12 @@ def test_fast_drop_rug_and_pressure_exits() -> None:
     q = spot_pos()
     assert q.step_minute(60, 0.99, 0, 100, none, rules, tvl_drop_15m=-0.35) == "rug"
     r = spot_pos()
-    assert r.step_minute(60, 0.99, 0, 100, none, rules, pressure=True) == "sell_pressure"
+    assert r.step_minute(60, 0.99, 0, 100, none, rules, danger="lp_exodus") == "lp_exodus"
+
+
+def test_exit_warnings() -> None:
+    assert exit_warning(CALM, 0.0) is None
+    assert exit_warning(TokenFlow(chg5m_pct=-6, buy5m=1_000, sell5m=4_000), None) == "sell_pressure"
+    assert exit_warning(TokenFlow(chg5m_pct=-9), None) == "dumping"
+    assert exit_warning(CALM, -0.25) == "lp_exodus"
+    assert exit_warning(TokenFlow(holder_change_1h_pct=-4), None) == "holders_leaving"
