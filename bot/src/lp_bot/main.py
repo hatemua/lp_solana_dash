@@ -23,6 +23,8 @@ from .strategies import BY_NAME, Strategy
 
 log = logging.getLogger("lp_bot")
 HEARTBEAT = Path("/tmp/lp_bot_heartbeat")
+MAX_ENTRY_SWAP_COST = 0.02
+_SKIP: dict[str, float] = {}                     # mint -> until: too expensive to buy, re-quote after 30 min
 
 
 class Others:
@@ -124,12 +126,14 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
         slots = cfg.max_open_per_strategy - len(mine)
         if slots <= 0:
             continue
-        busy = {p.pool for p in mine} | await store.recently_closed(db, s.name, s.rules.cooldown_min)
+        cooled_pools, cooled_mints = await store.recently_closed(db, s.name, s.rules.cooldown_min)
+        busy = {p.pool for p in mine} | cooled_pools
         taken_tokens = {p.name.split("-")[0] for p in mine}
+        taken_mints = {p.info.get("mint") for p in mine} | cooled_mints
         for c in sorted(cands, key=s.rank, reverse=True):
             if slots <= 0:
                 break
-            if c.pool in busy or c.name.split("-")[0] in taken_tokens:
+            if c.pool in busy or c.name.split("-")[0] in taken_tokens or c.mint in taken_mints                     or _SKIP.get(c.mint, 0) > time.time():
                 continue
             plan = s.entry(c, capital_sol)
             if not plan:
@@ -140,6 +144,10 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
             info.update(mint=c.mint, decimals=c.decimals)
             if plan.buy_sol > 0:                           # the token half: real Jupiter quote
                 frac = await jupiter.buy_cost(client, c.mint, c.decimals, plan.buy_sol, c.price)
+                if frac > MAX_ENTRY_SWAP_COST:             # thin liquidity: the position would start deep red
+                    log.info("skip %s %s: swap cost %.1f%%", s.name, c.name, frac * 100)
+                    _SKIP[c.mint] = time.time() + 1800
+                    continue
                 swap_cost = plan.buy_sol * frac
                 info["entry_swap_cost_pct"] = round(frac * 100, 3)
             p = Position(strategy=s.name, pool=c.pool, name=c.name, opened_at=time.time(), entry_price=c.price,
@@ -151,6 +159,7 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
             slots -= 1
             opened += 1
             taken_tokens.add(c.name.split("-")[0])
+            taken_mints.add(c.mint)
     return opened
 
 

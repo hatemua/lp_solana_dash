@@ -100,10 +100,12 @@ async def open_positions(db: asyncpg.Pool) -> list[Position]:
         "SELECT * FROM bot_positions WHERE status = 'open' ORDER BY id")]
 
 
-async def recently_closed(db: asyncpg.Pool, strategy: str, minutes_: int) -> set[str]:
-    return {r["pool"] for r in await db.fetch(
-        "SELECT pool FROM bot_positions WHERE strategy = $1 AND status = 'closed' "
-        "AND closed_at > now() - make_interval(mins => $2)", strategy, minutes_)}
+async def recently_closed(db: asyncpg.Pool, strategy: str, minutes_: int) -> tuple[set[str], set[str]]:
+    """Pools and token mints this strategy closed within the cooldown (a token can have several pools)."""
+    rows = await db.fetch(
+        "SELECT pool, state->'info'->>'mint' AS mint FROM bot_positions WHERE strategy = $1 AND status = 'closed' "
+        "AND closed_at > now() - make_interval(mins => $2)", strategy, minutes_)
+    return {r["pool"] for r in rows}, {r["mint"] for r in rows if r["mint"]}
 
 
 async def insert(db: asyncpg.Pool, p: Position, capital_usd: float, sol_usd_: float) -> int:
