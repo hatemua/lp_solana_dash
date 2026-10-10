@@ -392,7 +392,7 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
     async def authorize_decision(request: Request) -> Response:
         form = dict(parse_qsl((await request.body()).decode(errors="replace")[:8000]))
         p = {k: v[:600] for k, v in form.items() if k in AUTHZ_KEYS}
-        client, page_err, redir_err = await check_authz(p)
+        _, page_err, redir_err = await check_authz(p)
         if page_err:
             return page(ERROR_HTML.format(msg=html.escape(page_err)), 400)
         if redir_err:
