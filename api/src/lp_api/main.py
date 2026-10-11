@@ -23,6 +23,10 @@ from . import memes as MEMES
 from . import signals as S
 from .config import Settings, get_settings
 from .filters import PRESETS, FilterError, build_query
+from .paper import categories as CATS
+from .paper import routes as PAPER
+from .paper import store as PAPER_STORE
+from .paper import universe as UNIVERSE
 from .ratelimit import RateLimiter
 
 log = logging.getLogger("lp_api")
@@ -76,8 +80,9 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                      auth_limiter=RateLimiter(redis, cfg.auth_rate_limit_per_min, prefix="rl:auth"))
         try:
             await auth.ensure_schema(engine)
+            await PAPER_STORE.ensure_schema(engine)
         except Exception:                       # DB not up yet: the auth routes fail until a restart, data still served
-            log.exception("could not create the auth tables")
+            log.exception("could not create the auth / paper tables")
         yield
         await client.aclose()
         await redis.aclose()
@@ -122,6 +127,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         return r.json()
 
     app.include_router(auth.router(cfg, state))
+    app.include_router(PAPER.router(cfg, state))
 
     # ------------------------------------------------------------------ health
     @app.get("/health")
@@ -332,38 +338,19 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                 "pools": best[:limit]}
 
     # ------------------------------------------------------------------ memecoin screener
-    meme_cache: dict[str, Any] = {"at": 0.0, "tokens": []}
-    meme_lock = asyncio.Lock()
+    async def meteora_pools(mints: list[str]) -> dict[str, dict[str, Any]]:
+        found = await rows(
+            "SELECT DISTINCT ON (token_x) token_x AS mint, address, name, bin_step, tvl, fees_24h FROM pools "
+            "WHERE token_x = ANY(:m) AND token_y = :sol AND NOT is_blacklisted AND tvl > 0 "
+            "ORDER BY token_x, tvl DESC NULLS LAST", m=mints, sol=MEMES.SOL_MINT)
+        return {p.pop("mint"): p for p in found}
 
-    async def meme_universe() -> list[dict[str, Any]]:
-        """Jupiter's live lists merged (cached 90 s), joined with our best Meteora SOL pool per token."""
-        async with meme_lock:
-            if time.time() - meme_cache["at"] < 90 and meme_cache["tokens"]:
-                return list(meme_cache["tokens"])
-
-            async def one(name: str) -> tuple[str, list[dict[str, Any]]]:
-                try:
-                    r = await state["client"].get(f"{MEMES.JUP_TOKENS}/{name}", params={"limit": 100}, timeout=20)
-                    return name, r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
-                except (httpx.HTTPError, ValueError):
-                    return name, []
-
-            got = dict(await asyncio.gather(*(one(n) for n in MEMES.LISTS)))
-            tokens = MEMES.merge_lists(got)
-            if not tokens:
-                if meme_cache["tokens"]:
-                    return list(meme_cache["tokens"])       # Jupiter down: serve the last good list
-                raise HTTPException(503, "token lists unavailable (Jupiter)")
-            mints = [t["mint"] for t in tokens]
-            pools_ = await rows(
-                "SELECT DISTINCT ON (token_x) token_x AS mint, address, name, bin_step, tvl, fees_24h FROM pools "
-                "WHERE token_x = ANY(:m) AND token_y = :sol AND NOT is_blacklisted AND tvl > 0 "
-                "ORDER BY token_x, tvl DESC NULLS LAST", m=mints, sol=MEMES.SOL_MINT)
-            by = {p.pop("mint"): p for p in pools_}
-            for t in tokens:
-                t["meteora_pool"] = by.get(t["mint"])
-            meme_cache.update(at=time.time(), tokens=tokens)
-            return list(tokens)
+    async def meme_universe() -> dict[str, Any]:
+        """Jupiter + DexScreener universe, shared with the paper bot through Redis (rebuilt every ~2 min)."""
+        try:
+            return await UNIVERSE.get(state["redis"], state["client"], meteora_pools)
+        except RuntimeError as e:
+            raise HTTPException(503, str(e)) from e
 
     @app.get("/v1/memes/presets")
     async def meme_presets() -> dict[str, Any]:
@@ -372,13 +359,23 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/memes")
     async def meme_screen(request: Request) -> dict[str, Any]:
-        """Memecoin screener over Jupiter's trending / most traded / top organic / recent lists. Data, not advice."""
-        tokens = await meme_universe()
+        """Memecoin screener over Jupiter's and DexScreener's live lists. Data, not advice."""
+        u = await meme_universe()
         try:
-            out = MEMES.screen(tokens, dict(request.query_params))
+            out = MEMES.screen(u["tokens"], dict(request.query_params))
         except MEMES.ScreenError as e:
             raise HTTPException(400, str(e)) from e
-        return {**out, "updated_at": meme_cache["at"], "source": "jupiter tokens v2 + meteora pools"}
+        return {**out, "updated_at": u["at"], "heat": u["heat"], "sources": u.get("sources")}
+
+    @app.get("/v1/memes/categories")
+    async def meme_categories() -> dict[str, Any]:
+        """Narratives ranked by heat (where the money rotates now), with labels and size tiers."""
+        u = await meme_universe()
+        counts: dict[str, int] = {}
+        for t in u["tokens"]:
+            counts[t["narrative"]] = counts.get(t["narrative"], 0) + 1
+        return {"updated_at": u["at"], "heat": u["heat"], "counts": counts,
+                "narratives": CATS.NARRATIVE_LABELS, "tiers": CATS.TIER_LABELS}
 
     @app.get("/v1/signals/exit-check/{address}")
     async def exit_check(address: str = Path(..., pattern=ADDR), range_low: float = Query(..., gt=0),

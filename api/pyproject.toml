@@ -19,6 +19,7 @@ dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10"]
 
 [project.scripts]
 lp-api = "lp_api.main:run"
+lp-paper = "lp_api.paper.runner:run"
 
 [build-system]
 requires = ["hatchling"]

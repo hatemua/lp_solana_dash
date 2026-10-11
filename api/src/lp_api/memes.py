@@ -78,9 +78,13 @@ FILTERS = {  # param -> (field, op)
     "chg_24h_min": ("chg_24h", ">="), "chg_24h_max": ("chg_24h", "<="),
     "holder_chg_1h_min": ("holder_chg_1h", ">="),
     "momentum_min": ("momentum", ">="), "safety_min": ("safety", ">="),
+    "ds_txn_ratio_1h_min": ("ds_txn_ratio_1h", ">="), "price_gap_max": ("price_gap_pct", "<="),
 }
+LIST_FILTERS = {"narrative": "narrative", "tier": "tier", "stage": "stage"}     # comma-separated values
+BOOL_FILTERS = ("safe_only", "meteora_only", "socials_only", "boosted_only", "exclude_boosted")
 SORTS = {"momentum", "safety", "mcap", "liquidity", "volume_1h", "volume_24h", "chg_5m", "chg_1h", "chg_6h",
-         "chg_24h", "holders", "holder_chg_1h", "age_h", "organic_score", "buy_ratio_1h", "traders_1h"}
+         "chg_24h", "holders", "holder_chg_1h", "age_h", "organic_score", "buy_ratio_1h", "traders_1h",
+         "ds_txn_ratio_1h", "boost"}
 
 
 class ScreenError(ValueError):
@@ -115,15 +119,15 @@ def is_meme(t: dict[str, Any]) -> bool:
 
 
 def flags(r: dict[str, Any]) -> list[dict[str, str]]:
-    """Risk flags: level 'red' (avoid) or 'warn' (be careful)."""
+    """Risk flags: level 'red' (avoid), 'warn' (be careful) or 'info'."""
     out: list[dict[str, str]] = []
 
     def add(level: str, code: str, text: str) -> None:
         out.append({"level": level, "code": code, "text": text})
 
-    if r["mint_disabled"] is False:
+    if r.get("mint_disabled") is False:
         add("red", "mint_authority", "dev can mint new tokens")
-    if r["freeze_disabled"] is False:
+    if r.get("freeze_disabled") is False:
         add("red", "freeze_authority", "dev can freeze your tokens")
     top10 = r["top10_pct"]
     if top10 is not None and top10 > 50:
@@ -151,6 +155,21 @@ def flags(r: dict[str, Any]) -> list[dict[str, str]]:
         add("warn", "serial_dev", f"dev launched {r['dev_mints']:.0f} tokens")
     if r["chg_1h"] is not None and r["chg_1h"] >= 100:
         add("warn", "parabolic", f"+{r['chg_1h']:.0f}% in 1 h: late entries often top-buy")
+    if r.get("ds_price") is not None:                                    # DexScreener cross-checks
+        gap = r.get("price_gap_pct")
+        if gap is not None and gap > 10:
+            add("red", "price_mismatch", f"Jupiter and DexScreener prices differ by {gap:.0f}%")
+        elif gap is not None and gap > 3:
+            add("warn", "price_mismatch", f"Jupiter and DexScreener prices differ by {gap:.1f}%")
+        b, sl = r.get("ds_buys_1h") or 0, r.get("ds_sells_1h") or 0
+        if b + sl >= 100 and sl > 2 * max(b, 1) and not any(f["code"] == "sell_pressure" for f in out):
+            add("red", "sell_pressure", f"{sl} sells vs {b} buys in the last hour (DexScreener)")
+        if not (r.get("has_website") or r.get("has_twitter") or r.get("has_telegram")):
+            add("warn", "no_socials", "no website, X or Telegram listed")
+    if r.get("boost"):
+        add("info", "paid_boost", f"paid DexScreener boost ({r['boost']:.0f}): promoted, not organic attention")
+    if r.get("cto"):
+        add("info", "community_takeover", "community takeover: the original dev left")
     return out
 
 
@@ -169,6 +188,8 @@ def safety_score(r: dict[str, Any]) -> float:
     s += 10 * _clip((r["organic_score"] or 0) / 80)
     s += 10 * _clip((r["holders"] or 0) / 10_000)
     s += 10 * _clip(((r["liquidity"] or 0) / r["mcap"] if r["mcap"] else 0) / 0.10)
+    if r.get("ds_price") is not None and not (r.get("has_website") or r.get("has_twitter") or r.get("has_telegram")):
+        s -= 5
     reds = sum(1 for f in r["flags"] if f["level"] == "red")
     return round(max(0.0, s - 25 * reds), 1)
 
@@ -194,6 +215,7 @@ def normalize(t: dict[str, Any], lists: list[str], now: datetime | None = None) 
     buy1, sell1 = _f(s1.get("buyVolume")) or 0.0, _f(s1.get("sellVolume")) or 0.0
     r: dict[str, Any] = {
         "mint": t.get("id"), "symbol": t.get("symbol"), "name": t.get("name"), "icon": t.get("icon"),
+        "decimals": t.get("decimals"),
         "launchpad": t.get("launchpad"), "verified": bool(t.get("isVerified")), "tags": t.get("tags") or [],
         "twitter": t.get("twitter"), "website": t.get("website"),
         "price": _f(t.get("usdPrice")), "mcap": _f(t.get("mcap")), "fdv": _f(t.get("fdv")),
@@ -206,15 +228,33 @@ def normalize(t: dict[str, Any], lists: list[str], now: datetime | None = None) 
         "volume_5m": (_f(s5.get("buyVolume")) or 0) + (_f(s5.get("sellVolume")) or 0),
         "volume_1h": buy1 + sell1,
         "volume_24h": (_f(s24.get("buyVolume")) or 0) + (_f(s24.get("sellVolume")) or 0),
+        "buy_5m": _f(s5.get("buyVolume")) or 0.0, "sell_5m": _f(s5.get("sellVolume")) or 0.0,
         "buy_1h": buy1, "sell_1h": sell1, "buy_ratio_1h": round(buy1 / sell1, 3) if sell1 > 0 else None,
         "traders_1h": _f(s1.get("numTraders")), "net_buyers_1h": _f(s1.get("numNetBuyers")),
         "holder_chg_1h": _f(s1.get("holderChange")), "holder_chg_24h": _f(s24.get("holderChange")),
-        "lists": sorted(set(lists)),
+        "lists": sorted(set(lists)), "boost": 0.0, "cto": False,
     }
+    return score(r)
+
+
+def score(r: dict[str, Any]) -> dict[str, Any]:
     r["flags"] = flags(r)
     r["safety"] = safety_score(r)
     r["momentum"] = momentum_score(r)
     return r
+
+
+def enrich(r: dict[str, Any], ds: dict[str, Any] | None, disc: dict[str, Any] | None) -> dict[str, Any]:
+    """Adds DexScreener pair data and discovery lists to a row, then re-scores it."""
+    if ds:
+        r.update(ds)
+        if r.get("price") and ds.get("ds_price"):
+            r["price_gap_pct"] = round(abs(ds["ds_price"] / r["price"] - 1) * 100, 2)
+    if disc:
+        r["lists"] = sorted(set(r["lists"]) | set(disc["lists"]))
+        r["boost"] = disc.get("boost") or 0.0
+        r["cto"] = "dexscreener/cto" in disc["lists"]
+    return score(r)
 
 
 def merge_lists(lists: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -244,8 +284,10 @@ def _parse(params: dict[str, str]) -> dict[str, Any]:
                 out[k] = float(v)
             except ValueError as e:
                 raise ScreenError(f"{k} must be a number") from e
-        elif k in ("safe_only", "meteora_only"):
-            out[k] = str(v).lower() in ("1", "true", "yes")
+        elif k in BOOL_FILTERS:
+            out[k] = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes")
+        elif k in LIST_FILTERS:
+            out[k] = [x.strip() for x in (v if isinstance(v, list) else str(v).split(",")) if x.strip()]
     return out
 
 
@@ -273,6 +315,15 @@ def screen(tokens: list[dict[str, Any]], params: dict[str, str]) -> dict[str, An
             return False
         if f.get("meteora_only") and not r.get("meteora_pool"):
             return False
+        if f.get("socials_only") and not (r.get("has_website") or r.get("has_twitter") or r.get("has_telegram")):
+            return False
+        if f.get("boosted_only") and not r.get("boost"):
+            return False
+        if f.get("exclude_boosted") and r.get("boost"):
+            return False
+        for k, field in LIST_FILTERS.items():
+            if f.get(k) and r.get(field) not in f[k]:
+                return False
         for k, (field, op) in FILTERS.items():
             if k not in f:
                 continue
