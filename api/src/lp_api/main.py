@@ -427,7 +427,11 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     # ------------------------------------------------------------------ paper bot (M3, read-only views)
-    BOT_LABELS = {"pro_spot": "P1 Pro pools, spot +/-10 bins", "pro_spot_wide": "P2 Pro pools, spot +/-25 bins",
+    BOT_LABELS = {"v2_wide": "V2 Wide spot +/-25, calm entry, sells through the pool",
+                  "v2_calm": "V2 Calm pools, spot +/-40, fee/TVL >= 1.5%",
+                  "v2_bid_flip": "V2 SOL bids, fills flipped into asks (no swaps)",
+                  "auto": "Auto: the analyzer picks the pool and the shape",
+                  "pro_spot": "P1 Pro pools, spot +/-10 bins", "pro_spot_wide": "P2 Pro pools, spot +/-25 bins",
                   "pro_bid": "P3 SOL bids, even 30 bins, fee/TVL >= 2% (trails up)",
                   "topped_bid": "S1 Topped bid + flip", "meridian": "S2 Meridian bid-ask",
                   "chop_spot": "S3 Chop spot (anti-sawtooth)", "topped_bid_v2": "S1b Topped bid v2 (age, crash exit)",
@@ -468,7 +472,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         by = {a["strategy"]: a for a in agg}
         out = []
         active = set((hb or {}).get("strategies") or []) | set(by)    # running now, or with positions
-        for name, label in BOT_LABELS.items():
+        labels = {**BOT_LABELS, **{k: v for k, v in ((hb or {}).get("labels") or {}).items() if k not in BOT_LABELS}}
+        for name, label in labels.items():
             if active and name not in active:
                 continue
             a = by.get(name, {})
@@ -507,6 +512,26 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
             f"FROM bot_positions WHERE {' AND '.join(cond)} ORDER BY status DESC, "
             "COALESCE(closed_at, opened_at) DESC LIMIT :lim", **params)
         return {"positions": data}
+
+    ANALYZE_SQL = ("SELECT data FROM pool_analysis WHERE at > now() - interval '20 minutes' {and_pool} "
+                   "ORDER BY (choice IS NOT NULL) DESC, expected_pct DESC NULLS LAST, "
+                   "(data->>'fee_tvl_1h')::float DESC LIMIT :lim")
+
+    @app.get("/v1/analyze")
+    async def analyze_pools(limit: int = Query(60, ge=1, le=200)) -> dict[str, Any]:
+        """Pool analyzer (paper bot, every 5 min): per active pool the regime, the vetoes, replays of 5 LP shapes on
+        the pool's last 6 h of real minute data, and the shape to open, or skip."""
+        data = await bot_rows(ANALYZE_SQL.format(and_pool=""), lim=limit)
+        return {"pools": [d["data"] for d in data],
+                "method": {"lookback_h": 6, "start_every_min": 30, "min_edge_pct": 1.0, "max_round_trip_pct": 3.0,
+                           "capital_usd": 100}}
+
+    @app.get("/v1/analyze/{address}")
+    async def analyze_pool(address: str = Path(..., pattern=ADDR)) -> dict[str, Any]:
+        data = await bot_rows(ANALYZE_SQL.format(and_pool="AND pool = :p"), p=address, lim=1)
+        if not data:
+            raise HTTPException(404, "not analyzed in the last 20 min (the analyzer covers pools with >= $300/h fees)")
+        return data[0]["data"]
 
     # ------------------------------------------------------------------ wallet LP (non-custodial)
     @app.get("/v1/wallet/{owner}/positions")

@@ -25,6 +25,9 @@ SCHEMA = [
         id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT now(), strategy text, position_id bigint,
         kind text NOT NULL, detail jsonb)""",
     "CREATE INDEX IF NOT EXISTS bot_events_ts ON bot_events (ts DESC)",
+    """CREATE TABLE IF NOT EXISTS pool_analysis (
+        pool text PRIMARY KEY, at timestamptz NOT NULL, name text, choice text, expected_pct double precision,
+        data jsonb NOT NULL)""",
 ]
 
 
@@ -161,6 +164,22 @@ async def minutes(db: asyncpg.Pool, pools: list[str], since: float) -> dict[str,
                             pools, since):
         out.setdefault(r["pool"], []).append(dict(r))
     return out
+
+
+async def history(db: asyncpg.Pool, pool: str, hours: float) -> list[dict[str, Any]]:
+    """Per-minute price, cumulative fees and TVL of one pool over the last `hours` (the analyzer's replays)."""
+    return [dict(r) for r in await db.fetch(
+        "SELECT extract(epoch FROM ts)::float t, price, cum_fees, tvl FROM pool_stats WHERE pool = $1 "
+        "AND ts > now() - make_interval(secs => $2) ORDER BY ts", pool, hours * 3600)]
+
+
+async def save_analysis(db: asyncpg.Pool, a: dict[str, Any]) -> None:
+    ch = a.get("choice") or {}
+    await db.execute(
+        "INSERT INTO pool_analysis (pool, at, name, choice, expected_pct, data) VALUES ($1, to_timestamp($2), $3, $4, "
+        "$5, $6) ON CONFLICT (pool) DO UPDATE SET at = EXCLUDED.at, name = EXCLUDED.name, choice = EXCLUDED.choice, "
+        "expected_pct = EXCLUDED.expected_pct, data = EXCLUDED.data",
+        a["pool"], a["at"], a["name"], ch.get("shape"), ch.get("expected_pct"), a)
 
 
 async def snapshot_bins(db: asyncpg.Pool, pool: str) -> list[dict[str, Any]] | None:

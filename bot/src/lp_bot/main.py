@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 from redis.asyncio import Redis
 
+from . import analyze as AN
 from . import jupiter, store
 from .config import Settings, get_settings
 from .engine import SOFT_EXITS, TX_SOL, Position
@@ -28,6 +29,9 @@ MAX_ENTRY_SWAP_COST = 0.02
 MAX_ROUND_TRIP = 0.03            # careful entries: buy + sell back, real quotes
 PRICE_GAP = (-0.03, 0.04)        # Jupiter fill price vs pool price (the buy fee alone is ~+1%)
 REENTRY_BLOCK_MIN = 120
+ANALYZE_EVERY_S = 300
+ALL: dict[str, Strategy] = {**BY_NAME, AN.Auto.name: AN.Auto()}
+_RT: dict[str, tuple[float, tuple[float, float] | None]] = {}   # pool -> (when, round trip quote), 10 min
 PAUSED: dict[str, str | None] = {"reason": None}
 _SKIP: dict[str, float] = {}                     # mint -> until: too expensive to buy, re-quote after 30 min
 
@@ -92,7 +96,7 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
             bins_cache[p.pool] = await live_bins(client, cfg, p.pool) or await store.snapshot_bins(db, p.pool)
         tvl_now = new[-1]["tvl"] or 0
         others = Others(bins_cache[p.pool], sol_usd, p.step, fallback_usd=tvl_now / 50)
-        rules = BY_NAME[p.strategy].rules
+        rules = AN.rules_for(ALL[p.strategy], p.info)
         reason = None
         for r in new:
             prev = next((x for x in reversed(rows) if x["t"] < r["t"]), None)
@@ -219,11 +223,52 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
     return opened
 
 
+async def analyze_pools(db: Any, client: httpx.AsyncClient, cfg: Settings) -> tuple[int, int]:
+    """Analyze every candidate pool (see analyze.py) and store the result for the dashboard and the auto strategy."""
+    sol = await store.sol_usd(db)
+    if sol <= 0:
+        return 0, 0
+    capital_sol = cfg.position_usd / sol
+    done = chosen = 0
+    for c in await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h):
+        quoted = not AN.token_vetoes(c)                # don't spend quotes on tokens that fail safety
+        rt = None
+        if quoted:
+            hit = _RT.get(c.pool)
+            if hit and time.time() - hit[0] < 600:
+                rt = hit[1]
+            else:
+                rt = await jupiter.round_trip(client, c.mint, c.decimals, capital_sol / 2, c.price)
+                _RT[c.pool] = (time.time(), rt)
+        a = AN.assess(c, rt, quoted)
+        if not a["vetoes"] and rt is not None:
+            bins = await live_bins(client, cfg, c.pool) or await store.snapshot_bins(db, c.pool)
+            others = Others(bins, sol, c.step, fallback_usd=c.tvl / 50)
+            rows = await store.history(db, c.pool, AN.LOOKBACK_H)
+            a = await asyncio.to_thread(AN.analyze, c, rows, others, sol, capital_sol, rt)
+        AN.LATEST[c.pool] = a
+        await store.save_analysis(db, a)
+        done += 1
+        chosen += bool(a["choice"])
+    return done, chosen
+
+
+async def analyze_loop(db: Any, client: httpx.AsyncClient, cfg: Settings) -> None:
+    while True:
+        t0 = time.time()
+        try:
+            done, chosen = await analyze_pools(db, client, cfg)
+            log.info("analyzed %d pools in %.0fs, %d worth entering", done, time.time() - t0, chosen)
+        except Exception:
+            log.exception("analysis failed")
+        await asyncio.sleep(max(30.0, ANALYZE_EVERY_S - (time.time() - t0)))
+
+
 async def run_async() -> None:
     cfg = get_settings()
     if cfg.bot_mode != "paper":
         raise SystemExit("BOT_MODE must be 'paper': live trading is not enabled in this build")
-    strategies = [BY_NAME[n] for n in cfg.strategy_names]
+    strategies = [ALL[n] for n in cfg.strategy_names]
     db = await store.connect(cfg.database_url)
     redis = Redis.from_url(cfg.redis_url, decode_responses=True)
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
@@ -231,9 +276,11 @@ async def run_async() -> None:
              cfg.position_usd, cfg.max_open_per_strategy)
     await store.event(db, None, None, "start", {"strategies": [s.name for s in strategies],
                                                 "position_usd": cfg.position_usd})
+    analyzer = asyncio.create_task(analyze_loop(db, client, cfg))
     while True:
         t0 = time.time()
-        status: dict[str, Any] = {"ts": t0, "mode": "paper", "strategies": [s.name for s in strategies]}
+        status: dict[str, Any] = {"ts": t0, "mode": "paper", "strategies": [s.name for s in strategies],
+                                  "labels": {s.name: s.label for s in strategies}, "analyzer": not analyzer.done()}
         try:
             sol = await store.sol_usd(db)
             if sol <= 0:

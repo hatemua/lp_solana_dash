@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     executor_url: str = "http://localhost:8200"
 
     bot_mode: str = "paper"              # only "paper" is accepted
-    strategies: str = "v2_wide,v2_calm,v2_bid_flip"
+    strategies: str = "v2_wide,v2_calm,v2_bid_flip,auto"
     position_usd: float = 100.0
     max_open_per_strategy: int = 3
     tick_s: int = 60

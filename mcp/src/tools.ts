@@ -221,7 +221,7 @@ export const TOOLS: ToolDef[] = [
       status: z.enum(["open", "closed", "all"]).default("open"),
       strategy: z
         .enum([
-          "pro_spot", "pro_spot_wide", "pro_bid",
+          "v2_wide", "v2_calm", "v2_bid_flip", "auto", "pro_spot", "pro_spot_wide", "pro_bid",
           "topped_bid", "meridian", "chop_spot", "topped_bid_v2", "evil_panda", "grid", "fee_leader",
           "meridian_trail", "rabbit",
         ])
@@ -229,5 +229,20 @@ export const TOOLS: ToolDef[] = [
       limit: z.number().int().min(1).max(200).default(30),
     },
     run: (api, a) => api.get("/v1/bot/positions", { status: a.status, strategy: a.strategy, limit: a.limit }),
+  },
+  {
+    name: "analyze_pools",
+    title: "Pool analyzer",
+    description:
+      "Which Meteora LP shape to open in each active pool, or skip (read-only, refreshed every 5 min). Per pool: " +
+      "regime (sideways calm/volatile, rising, topped, falling), vetoes (token safety, real buy+sell-back cost, " +
+      "pool price vs market, falling token), replays of 5 shapes (spot +/-10/25/40, SOL bids, bids with flip) on the " +
+      "pool's last 6 h of real minute data with average, worst case, win rate and fees/h, and the choice. Past " +
+      "replays are evidence, not a guarantee. Pass `pool` for one pool.",
+    input: {
+      pool: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).optional(),
+      limit: z.number().int().min(1).max(100).default(20),
+    },
+    run: (api, a) => (a.pool ? api.get(`/v1/analyze/${a.pool}`) : api.get("/v1/analyze", { limit: a.limit })),
   },
 ];

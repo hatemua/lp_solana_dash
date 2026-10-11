@@ -18,20 +18,25 @@ _lock = asyncio.Lock()
 
 async def _quote(client: httpx.AsyncClient, in_mint: str, out_mint: str, amount_raw: int) -> int | None:
     global _last
-    async with _lock:                                      # ~1 request per second, well under the free limit
-        wait = 1.0 - (time.time() - _last)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last = time.time()
-    try:
-        r = await client.get(QUOTE_URL, params={"inputMint": in_mint, "outputMint": out_mint, "amount": amount_raw,
-                                                "slippageBps": 100}, headers={"User-Agent": "Mozilla/5.0"},
-                             timeout=10)
-        if r.status_code == 200:
-            return int(r.json()["outAmount"])
-        log.debug("quote %s: %s", r.status_code, r.text[:200])
-    except (httpx.HTTPError, KeyError, ValueError) as e:
-        log.debug("quote failed: %s", e)
+    for attempt in range(3):                               # the keyless API answers 429 in bursts (the server's IP
+        async with _lock:                                  # is shared with the meme bot): back off and retry
+            wait = 1.0 - (time.time() - _last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _last = time.time()
+        try:
+            r = await client.get(QUOTE_URL, params={"inputMint": in_mint, "outputMint": out_mint,
+                                                    "amount": amount_raw, "slippageBps": 100},
+                                 headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if r.status_code == 200:
+                return int(r.json()["outAmount"])
+            log.debug("quote %s: %s", r.status_code, r.text[:200])
+            if r.status_code != 429:
+                return None
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            log.debug("quote failed: %s", e)
+            return None
+        await asyncio.sleep(2.0 * (attempt + 1))
     return None
 
 
