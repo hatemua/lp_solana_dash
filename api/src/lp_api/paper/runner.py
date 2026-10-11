@@ -157,7 +157,7 @@ class Runner:
         return True
 
     async def step_open(self) -> int:
-        rows = await store.q(self.db, """SELECT p.*, extract(epoch FROM p.opened_at) AS opened_s, b.params,
+        rows = await store.q(self.db, """SELECT p.*, extract(epoch FROM p.opened_at)::float8 AS opened_s, b.params,
             b.status AS bot_status FROM paper_positions p JOIN paper_bots b ON b.id = p.bot_id
             WHERE p.status = 'open'""")
         if not rows:
@@ -167,7 +167,7 @@ class Runner:
         for r in rows:
             st = r["state"] if isinstance(r["state"], dict) else json.loads(r["state"] or "{}")
             p = Pos(id=r["id"], bot_id=r["bot_id"], mint=r["mint"], symbol=r["symbol"], narrative=r["narrative"],
-                    decimals=r["decimals"], opened_at=r["opened_s"], entry_price=r["entry_price"],
+                    decimals=r["decimals"], opened_at=float(r["opened_s"]), entry_price=r["entry_price"],
                     entry_liquidity=r["entry_liquidity"], usd_in=r["usd_in"], tokens=r["tokens"],
                     tokens_left=r["tokens_left"], peak_price=r["peak_price"], last_price=r["last_price"],
                     tp_done=bool(st.get("tp_done")), misses=int(st.get("misses", 0)),
