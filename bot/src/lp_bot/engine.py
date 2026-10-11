@@ -4,11 +4,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from .sim import Leg, bid_ask, bid_bins_below, even_bids_below, fee_share
+from .sim import Bin, Leg, bid_ask, bid_bins_below, even_bids_below, fee_share
 from .strategies import ExitRules
 
 TX_SOL = 0.0002                 # per on-chain action (open, close, flip), incl. priority fee
 LP_SHARE = 0.95                 # DLMM pools keep ~5% of swap fees as protocol fee
+SOFT_EXITS = ("take_profit", "trailing", "fee_death", "time")     # no danger: sell through the pool, not a swap
 
 
 @dataclass
@@ -63,8 +64,8 @@ class Position:
         self.px_log.append((ts, price))
         self.last_ts, self.last_price = ts, price
 
-        if rules.flip and not self.flipped:
-            self._maybe_flip(price)
+        if rules.flip and not self.flipped and not self.info.get("unwind"):
+            self._maybe_flip(price, rules)
 
         net = self.net_pct(price)
         self.peak_net = max(self.peak_net, net)
@@ -74,13 +75,11 @@ class Position:
         self.out_above = self.out_above + 1 if price > highest and self.tokens(price) == 0 else 0
         age_min = (ts - self.opened_at) / 60
 
-        if tvl_drop_15m is not None and tvl_drop_15m <= -0.3:
-            return "rug"                                   # LPs pulled 30% of the pool within 15 min
-        last3 = [px for t, px in self.px_log if t >= ts - 3 * 60]
-        if last3 and (price / max(last3) - 1) * 100 <= -6:
-            return "fast_drop"                             # -6% within 3 minutes: don't wait for the stop
-        if danger and self.tokens(price) > 0:
-            return danger                                  # early crash warning while we hold the token
+        hard = self._hard_exit(ts, price, tvl_drop_15m, danger)
+        if hard:
+            return hard
+        if self.info.get("unwind"):
+            return self._unwind_exit(ts, price, net, rules)
         if net >= rules.take_profit:
             return "take_profit"
         if net >= rules.trail_trigger:
@@ -127,19 +126,54 @@ class Position:
         self.costs_sol += 2 * TX_SOL
         self.info["recenters"] = self.info.get("recenters", 0) + 1
 
-    def _maybe_flip(self, price: float) -> None:
+    def _hard_exit(self, ts: float, price: float, tvl_drop_15m: float | None, danger: str | None) -> str | None:
+        if tvl_drop_15m is not None and tvl_drop_15m <= -0.3:
+            return "rug"                                   # LPs pulled 30% of the pool within 15 min
+        last3 = [px for t, px in self.px_log if t >= ts - 3 * 60]
+        if last3 and (price / max(last3) - 1) * 100 <= -6:
+            return "fast_drop"                             # -6% within 3 minutes: don't wait for the stop
+        if danger and self.tokens(price) > 0:
+            return danger                                  # early crash warning while we hold the token
+        return None
+
+    def start_unwind(self, price: float, rules: ExitRules, reason: str) -> bool:
+        """Soft exit: instead of swapping the tokens back (2-15% on these pools), offer them in a few ask bins right
+        above the price and let traders buy them (we earn the fee). False when there is little left to sell."""
+        toks = self.tokens(price)
+        if toks * price < 0.05 * self.capital_sol:
+            return False
+        n, r = rules.unwind_bins, 1 + self.step
+        self.idle_sol += sum(lg.sol_held(price) for lg in self.legs)
+        self.legs = [Leg("U", [Bin(price=price * r ** k, tok=toks / n, side="ask") for k in range(1, n + 1)])]
+        self.costs_sol += 2 * TX_SOL
+        self.info["unwind"] = {"ts": self.last_ts, "reason": reason, "price": price, "tokens": toks}
+        return True
+
+    def _unwind_exit(self, ts: float, price: float, net: float, rules: ExitRules) -> str | None:
+        u = self.legs[0]
+        sold, left = u.sol_held(price), u.tokens(price) * price
+        if sold >= 0.9 * (sold + left):
+            return "unwound"
+        if net <= rules.stop:
+            return "stop"
+        if ts - self.info["unwind"]["ts"] >= rules.unwind_max_min * 60:
+            return "unwind_timeout"                        # the rest is swapped back at the real quote
+        return None
+
+    def _maybe_flip(self, price: float, rules: ExitRules | None = None) -> None:
+        rules = rules or ExitRules()
         a = next((lg for lg in self.legs if lg.name == "A"), None)
-        if a is None or a.converted(price) < 0.7:
+        if a is None or a.converted(price) < rules.flip_fill:
             return
         self.low_since_fill = min(self.low_since_fill or price, price)
-        if price < self.low_since_fill * 1.05:
+        if price < self.low_since_fill * rules.flip_bounce:
             return
         toks = a.tokens(price)
         spent = sum(b.sol for b in a.bins if price <= b.price)
         avg = spent / toks if toks else price
         self.idle_sol += a.sol_held(price)
         self.legs.remove(a)
-        top = avg * 1.10 / price
+        top = avg * rules.flip_target / price
         if top > 1 + self.step:
             self.legs.append(Leg("F", bid_ask(price, 1 + self.step, top, self.step, toks, "ask")))
         else:                                              # already above the average: just sell

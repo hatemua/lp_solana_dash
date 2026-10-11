@@ -50,6 +50,20 @@ async def buy_cost(client: httpx.AsyncClient, mint: str, decimals: int, sol: flo
     return cost_fraction(sol, out / 10 ** decimals * price)
 
 
+async def round_trip(client: httpx.AsyncClient, mint: str, decimals: int, sol: float,
+                     price: float) -> tuple[float, float] | None:
+    """Buy the token with `sol` and sell it straight back: (cost share of the round trip, gap between the price
+    Jupiter fills at and the pool price we mark at). None when a quote fails. Unlike buy_cost, nothing here depends
+    on the pool price being right, which it was not (-4%..+10% vs the real fills on 2026-10-11)."""
+    out = await _quote(client, SOL_MINT, mint, int(sol * 1e9))
+    if not out:
+        return None
+    back = await _quote(client, mint, SOL_MINT, out)
+    if not back:
+        return None
+    return 1 - back / 1e9 / sol, sol / (out / 10 ** decimals) / price - 1
+
+
 async def sell_cost(client: httpx.AsyncClient, mint: str, decimals: int, tokens: float, price: float) -> float:
     """Cost of selling `tokens` back to SOL; price = SOL per token (pool)."""
     raw = int(tokens * 10 ** decimals)

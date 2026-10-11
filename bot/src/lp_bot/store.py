@@ -182,6 +182,13 @@ async def recently_closed(db: asyncpg.Pool, strategy: str, minutes_: int) -> tup
     return {r["pool"] for r in rows}, {r["mint"] for r in rows if r["mint"]}
 
 
+async def closed_mints(db: asyncpg.Pool, minutes_: int) -> set[str]:
+    """Tokens any strategy closed within the last `minutes_` (no quick re-entry: QI 2026-10-11 00:21 lost $6.91)."""
+    rows = await db.fetch("SELECT DISTINCT state->'info'->>'mint' AS mint FROM bot_positions WHERE status = 'closed' "
+                          "AND closed_at > now() - make_interval(mins => $1)", minutes_)
+    return {r["mint"] for r in rows if r["mint"]}
+
+
 async def insert(db: asyncpg.Pool, p: Position, capital_usd: float, sol_usd_: float) -> int:
     pid = await db.fetchval(
         "INSERT INTO bot_positions (strategy, pool, name, status, opened_at, entry_price, capital_usd, sol_usd_entry, "

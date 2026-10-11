@@ -115,3 +115,26 @@ def test_recenter_keeps_even_shape() -> None:
     p.step_minute(120, 1.1, 0.0, SOL_USD, nobody, rules)
     sols = [b.sol for b in p.legs[0].bins]
     assert p.info["recenters"] == 1 and len(sols) == 30 and max(sols) - min(sols) < 1e-12
+
+
+def test_unwind_sells_through_the_pool() -> None:
+    from lp_bot.sim import spot_two_sided
+    p = Position(strategy="v2_wide", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.03, legs=[Leg("S", spot_two_sided(1.0, 25, STEP, 0.5, 0.5))], last_price=1.0)
+    rules = ExitRules(unwind=True, unwind_bins=5, unwind_max_min=60)
+    p.step_minute(60, 0.98, 0.0, SOL_USD, nobody, rules)
+    before = p.value(0.98)
+    assert p.start_unwind(0.98, rules, "fee_death")
+    assert abs(p.value(0.98) - before) < 1e-9 and p.legs[0].name == "U"         # same value, now asks above
+    assert p.step_minute(120, 0.99, 0.0, SOL_USD, nobody, rules) is None          # part sold
+    assert p.step_minute(180, 0.98 * 1.01 ** 5, 0.0, SOL_USD, nobody, rules) == "unwound"
+
+
+def test_unwind_times_out() -> None:
+    from lp_bot.sim import spot_two_sided
+    p = Position(strategy="v2_wide", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.03, legs=[Leg("S", spot_two_sided(1.0, 25, STEP, 0.5, 0.5))], last_price=1.0)
+    rules = ExitRules(unwind=True, unwind_max_min=60)
+    p.step_minute(60, 1.0, 0.0, SOL_USD, nobody, rules)
+    assert p.start_unwind(1.0, rules, "time")
+    assert p.step_minute(60 + 61 * 60, 1.0, 0.0, SOL_USD, nobody, rules) == "unwind_timeout"

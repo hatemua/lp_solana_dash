@@ -51,3 +51,11 @@ def test_exit_warnings() -> None:
     assert exit_warning(TokenFlow(chg5m_pct=-9), None) == "dumping"
     assert exit_warning(CALM, -0.25) == "lp_exodus"
     assert exit_warning(TokenFlow(holder_change_1h_pct=-4), None) == "holders_leaving"
+
+
+def test_calm_entry_has_a_margin_below_the_exit_warnings() -> None:
+    from lp_bot.guards import calm_entry
+    assert calm_entry(None) == ["no_flow"]
+    assert calm_entry(TokenFlow(chg5m_pct=0.5, chg1h_pct=2, buy5m=3000, sell5m=2500)) == []
+    assert "falling_5m" in calm_entry(TokenFlow(chg5m_pct=-4, buy5m=3000, sell5m=2000))
+    assert "sellers_ahead" in calm_entry(TokenFlow(chg5m_pct=0, buy5m=1000, sell5m=1900))   # passed the old guard

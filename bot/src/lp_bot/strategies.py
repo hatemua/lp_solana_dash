@@ -14,6 +14,8 @@ S6 fee_leader  the table's leaders by fee/TVL (>= 2%/h), basic safety only (no a
 S2b meridian_trail  S2, but when the price runs above the bids they move up under it (no upside left on the table).
 S7 rabbit      rising token (+10%..+60% in 1 h, fees accelerating): buy it, sell it back into the pump with a
                token-side bid-ask from +1% to +30%; done when sold out, stop -8%.
+V2 v2_wide / v2_calm / v2_bid_flip  the pro shapes with careful entries (calm token, real round trip <= 3%, pool
+               price = market), confirmed warnings, longer holds, and soft exits that sell through the pool.
 Swap costs (two-sided entries, selling tokens on exit) are real Jupiter quotes, see jupiter.py.
 """
 
@@ -92,6 +94,14 @@ class ExitRules:
     flip_stop: bool = False            # after a flip, exit if the price breaks below the pre-bounce low
     recenter_above: bool = False       # SOL bids: when the price stays above them, move them up under it
     max_recenters: int = 20
+    flip_fill: float = 0.7             # flip once this share of the bids has filled ...
+    flip_bounce: float = 1.05          # ... and the price is this far above the low since the fill
+    flip_target: float = 1.10          # asks up to this multiple of the average buy price
+    unwind: bool = False               # soft exits sell the tokens through the pool (ask bins), not with a swap
+    unwind_bins: int = 5
+    unwind_max_min: int = 60
+    confirm_warnings: bool = False     # sell_pressure / dumping must show on 2 ticks in a row and not in the first
+    warn_min_age_min: int = 10         # minutes (fast drop, rug and stop still exit at once)
 
 
 def safe(c: Candidate, top10_max: float = 30) -> bool:
@@ -102,6 +112,7 @@ class Strategy:
     name = "base"
     label = ""
     rules = ExitRules()
+    careful = False                    # V2 entry: calm token, cheap real round trip, pool price = market price
 
     def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
         raise NotImplementedError
@@ -356,8 +367,48 @@ class ProBid(Strategy):
                                                             "token_age_h": c.token_age_h})
 
 
-PRO: list[Strategy] = [ProSpot(), ProSpotWide(), ProBid()]
+# V2 (2026-10-11), from the first 17 pro positions: the pools paid $15 of fees, but swapping the tokens back on exit
+# cost ~$15.6 (4-15% quotes) and 9 of 17 positions were closed within 15 min by warnings that showed right after the
+# entry. So: enter only calm tokens whose real round trip is cheap and whose pool price matches the market, confirm
+# warnings, hold longer, and on soft exits sell the tokens through the pool instead of swapping them.
+V2_EXITS: dict[str, Any] = {"unwind": True, "confirm_warnings": True, "cooldown_min": 120}
 
-STRATEGIES: list[Strategy] = [*PRO, ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(),
+
+class V2Wide(ProSpotWide):
+    name = "v2_wide"
+    label = "V2 Wide spot +/-25, calm entry, sells through the pool"
+    careful = True
+    rules = ExitRules(take_profit=6, trail_trigger=4, trail_drop=2.5, stop=-10, out_below_min=20, out_above_min=20,
+                      max_hours=6, crash_pct=-12, crash_window_min=30, fee_death_min=45, **V2_EXITS)
+
+
+class V2Calm(ProSpot):
+    name = "v2_calm"
+    label = "V2 Calm pools, spot +/-40, fee/TVL >= 1.5%"
+    careful = True
+    bins_each_side = 40
+    rules = ExitRules(take_profit=8, trail_trigger=6, trail_drop=3, stop=-12, out_below_min=30, out_above_min=30,
+                      max_hours=8, crash_pct=-15, crash_window_min=30, fee_death_min=60, **V2_EXITS)
+
+    def entry(self, c: Candidate, capital_sol: float) -> Plan | None:
+        ch = c.price_change_1h_pct
+        if ch is None or abs(ch) > 10 or c.fee_tvl_1h < 1.5:
+            return None                        # a quiet price: the range keeps earning instead of running out
+        return super().entry(c, capital_sol)
+
+
+class V2BidFlip(ProBid):
+    name = "v2_bid_flip"
+    label = "V2 SOL bids, fills flipped into asks (no swaps)"
+    careful = True
+    rules = ExitRules(take_profit=5, trail_trigger=4, trail_drop=2, stop=-12, out_below_min=30, out_above_min=5,
+                      max_hours=6, crash_pct=-15, crash_window_min=15, fee_death_min=45, recenter_above=True,
+                      flip=True, flip_fill=0.3, flip_bounce=1.03, flip_target=1.04, **V2_EXITS)
+
+
+PRO: list[Strategy] = [ProSpot(), ProSpotWide(), ProBid()]
+V2: list[Strategy] = [V2Wide(), V2Calm(), V2BidFlip()]
+
+STRATEGIES: list[Strategy] = [*V2, *PRO, ToppedBid(), Meridian(), ChopSpot(), ToppedBidV2(), EvilPanda(), Grid(),
                               FeeLeader(), MeridianTrail(), Rabbit()]
 BY_NAME = {s.name: s for s in STRATEGIES}

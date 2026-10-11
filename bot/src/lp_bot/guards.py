@@ -42,6 +42,20 @@ def entry_guard(flow: TokenFlow, tvl_change_30m: float | None, blacklisted: bool
     return bad
 
 
+def calm_entry(flow: TokenFlow | None) -> list[str]:
+    """V2 entry, a margin below the exit warnings: a token close to a warning gets sold minutes after we buy it."""
+    if flow is None or flow.chg5m_pct is None:
+        return ["no_flow"]
+    bad = []
+    if flow.chg5m_pct <= -3:
+        bad.append("falling_5m")
+    if flow.chg1h_pct is not None and flow.chg1h_pct <= -10:
+        bad.append("falling_1h")
+    if flow.buy5m + flow.sell5m >= 500 and flow.sell5m > 1.2 * flow.buy5m:
+        bad.append("sellers_ahead")
+    return bad
+
+
 def exit_pressure(flow: TokenFlow | None) -> bool:
     """In position: sellers > 3x buyers over 5 min while the price falls >= 5%."""
     if flow is None or flow.chg5m_pct is None:

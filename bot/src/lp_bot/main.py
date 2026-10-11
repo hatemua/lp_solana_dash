@@ -18,13 +18,16 @@ from redis.asyncio import Redis
 
 from . import jupiter, store
 from .config import Settings, get_settings
-from .engine import TX_SOL, Position
-from .guards import entry_guard, exit_warning, portfolio_pause
-from .strategies import BY_NAME, Strategy
+from .engine import SOFT_EXITS, TX_SOL, Position
+from .guards import calm_entry, entry_guard, exit_warning, portfolio_pause
+from .strategies import BY_NAME, SELL_COST_ESTIMATE, Strategy
 
 log = logging.getLogger("lp_bot")
 HEARTBEAT = Path("/tmp/lp_bot_heartbeat")
 MAX_ENTRY_SWAP_COST = 0.02
+MAX_ROUND_TRIP = 0.03            # careful entries: buy + sell back, real quotes
+PRICE_GAP = (-0.03, 0.04)        # Jupiter fill price vs pool price (the buy fee alone is ~+1%)
+REENTRY_BLOCK_MIN = 120
 PAUSED: dict[str, str | None] = {"reason": None}
 _SKIP: dict[str, float] = {}                     # mint -> until: too expensive to buy, re-quote after 30 min
 
@@ -103,6 +106,10 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
                 old30 = next((x for x in rows if x["t"] >= r["t"] - 30 * 60), None)
                 tvl30 = (r["tvl"] / old30["tvl"] - 1) if old30 and old30["tvl"] and r["tvl"] else None
                 danger = exit_warning(flow_by_mint.get(p.info.get("mint", "")), tvl30)
+                if rules.confirm_warnings:                  # one noisy 5-min stat is not a crash
+                    p.info["warn_n"] = p.info.get("warn_n", 0) + 1 if danger else 0
+                    if danger and (p.info["warn_n"] < 2 or r["t"] - p.opened_at < rules.warn_min_age_min * 60):
+                        danger = None
             gap = r["t"] - p.last_ts
             if gap > 600:
                 fees = 0.0                                  # fees earned while we were blind are not ours to count
@@ -111,6 +118,12 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
                 reason = "data_gap"                         # we were blind > 10 min: close at the first price back
             if reason:
                 break
+        if reason in SOFT_EXITS and rules.unwind and not p.info.get("unwind") \
+                and p.start_unwind(p.last_price, rules, reason):
+            log.info("unwind %s %s after %s", p.strategy, p.name, reason)
+            await store.event(db, p.strategy, p.id, "unwind", {"reason": reason,
+                                                               "net_pct": round(p.net_pct(p.last_price), 3)})
+            reason = None
         if reason:
             toks = p.tokens(p.last_price)
             if toks > 0 and p.info.get("mint"):          # the real cost of selling what we hold back to SOL
@@ -148,6 +161,7 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
             guarded.append(c)
     cands = guarded
     open_ = await store.open_positions(db)
+    recent = await store.closed_mints(db, REENTRY_BLOCK_MIN)
     opened = 0
     capital_sol = cfg.position_usd / sol_usd
     for s in strategies:
@@ -165,14 +179,26 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
             cooling = c.mint in taken_mints or _SKIP.get(c.mint, 0) > time.time()
             if c.pool in busy or c.name.split("-")[0] in taken_tokens or cooling:
                 continue
+            if s.careful and (c.mint in recent or calm_entry(c.flow)):
+                continue
             plan = s.entry(c, capital_sol)
             if not plan:
                 continue
             n_positions = sum(math.ceil(len(lg.bins) / 69) for lg in plan.legs)
-            swap_cost = 0.0
+            swap_cost, sell_cost = 0.0, c.sell_cost
             info = {k: v for k, v in plan.info.items() if isinstance(v, int | float | str | None)}
             info.update(mint=c.mint, decimals=c.decimals)
-            if plan.buy_sol > 0:                           # the token half: real Jupiter quote
+            if s.careful:                                  # real round trip; bids fill into tokens we sell too
+                rt = await jupiter.round_trip(client, c.mint, c.decimals, plan.buy_sol or capital_sol / 2, c.price)
+                if rt is None or rt[0] > MAX_ROUND_TRIP or not PRICE_GAP[0] <= rt[1] <= PRICE_GAP[1]:
+                    log.info("skip %s %s: round trip %s", s.name, c.name,
+                             "no quote" if rt is None else f"{rt[0]:.1%}, price gap {rt[1]:+.1%}")
+                    _SKIP[c.mint] = time.time() + (300 if rt is None else 1800)
+                    continue
+                swap_cost = plan.buy_sol * rt[0] / 2
+                sell_cost = max(SELL_COST_ESTIMATE, rt[0] / 2)
+                info.update(round_trip_pct=round(rt[0] * 100, 3), price_gap_pct=round(rt[1] * 100, 3))
+            elif plan.buy_sol > 0:                         # the token half: real Jupiter quote
                 frac = await jupiter.buy_cost(client, c.mint, c.decimals, plan.buy_sol, c.price)
                 if frac > MAX_ENTRY_SWAP_COST:             # thin liquidity: the position would start deep red
                     log.info("skip %s %s: swap cost %.1f%%", s.name, c.name, frac * 100)
@@ -181,7 +207,7 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
                 swap_cost = plan.buy_sol * frac
                 info["entry_swap_cost_pct"] = round(frac * 100, 3)
             p = Position(strategy=s.name, pool=c.pool, name=c.name, opened_at=time.time(), entry_price=c.price,
-                         capital_sol=capital_sol, step=c.step, sell_cost=c.sell_cost, legs=plan.legs,
+                         capital_sol=capital_sol, step=c.step, sell_cost=sell_cost, legs=plan.legs,
                          idle_sol=plan.idle_sol, costs_sol=swap_cost + n_positions * TX_SOL,
                          last_ts=time.time(), last_price=c.price, info=info)
             p.id = await store.insert(db, p, cfg.position_usd, sol_usd)
