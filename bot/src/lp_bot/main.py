@@ -230,8 +230,10 @@ async def analyze_pools(db: Any, client: httpx.AsyncClient, cfg: Settings) -> tu
         return 0, 0
     capital_sol = cfg.position_usd / sol
     done = chosen = 0
+    black = await store.blacklisted_mints(db)          # same 24 h block as the entries
     for c in await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h):
-        quoted = not AN.token_vetoes(c)                # don't spend quotes on tokens that fail safety
+        banned = c.mint in black
+        quoted = not AN.token_vetoes(c) and not banned  # don't spend quotes on tokens we won't enter
         rt = None
         if quoted:
             hit = _RT.get(c.pool)
@@ -240,12 +242,12 @@ async def analyze_pools(db: Any, client: httpx.AsyncClient, cfg: Settings) -> tu
             else:
                 rt = await jupiter.round_trip(client, c.mint, c.decimals, capital_sol / 2, c.price)
                 _RT[c.pool] = (time.time(), rt)
-        a = AN.assess(c, rt, quoted)
+        a = AN.assess(c, rt, quoted, banned)
         if not a["vetoes"] and rt is not None:
             bins = await live_bins(client, cfg, c.pool) or await store.snapshot_bins(db, c.pool)
             others = Others(bins, sol, c.step, fallback_usd=c.tvl / 50)
             rows = await store.history(db, c.pool, AN.LOOKBACK_H)
-            a = await asyncio.to_thread(AN.analyze, c, rows, others, sol, capital_sol, rt)
+            a = await asyncio.to_thread(AN.analyze, c, rows, others, sol, capital_sol, rt, banned)
         AN.LATEST[c.pool] = a
         await store.save_analysis(db, a)
         done += 1

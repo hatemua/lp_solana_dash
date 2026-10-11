@@ -194,10 +194,12 @@ def choose(shapes: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[st
             "lower_pct": st["lower_pct"], "win_rate": st["win_rate"], "confidence": conf}, why_not
 
 
-def assess(c: Candidate, rt: tuple[float, float] | None, quoted: bool) -> dict[str, Any]:
+def assess(c: Candidate, rt: tuple[float, float] | None, quoted: bool, blacklisted: bool = False) -> dict[str, Any]:
     """The cheap part: pool and token facts, regime and vetoes (no replay)."""
     reg, falling = regime(c)
     vetoes = token_vetoes(c) + falling
+    if blacklisted:
+        vetoes.append("crashed on the bot in the last 24 h (the bot won't re-enter it)")
     if quoted and rt is None:
         vetoes.append("no Jupiter quote (can't price the swap)")
     elif rt is not None:
@@ -221,9 +223,9 @@ def assess(c: Candidate, rt: tuple[float, float] | None, quoted: bool) -> dict[s
 
 
 def analyze(c: Candidate, rows: list[dict[str, Any]], others: Any, sol_usd: float, capital_sol: float,
-            rt: tuple[float, float]) -> dict[str, Any]:
+            rt: tuple[float, float], blacklisted: bool = False) -> dict[str, Any]:
     """assess + replay every shape on the pool's real minute data + the choice."""
-    out = assess(c, rt, True)
+    out = assess(c, rt, True, blacklisted)
     if out["vetoes"]:
         return out
     fit = set(FIT[out["regime"]])
