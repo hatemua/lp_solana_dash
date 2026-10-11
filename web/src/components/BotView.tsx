@@ -70,7 +70,7 @@ function color(v: number | null | undefined): string {
 }
 
 function Equity({ points }: { points: { ts: string; usd: number }[] }) {
-  if (points.length < 2) return <div className="h-12 text-xs text-mut">equity curve after 2 closed positions</div>;
+  if (points.length < 2) return <div className="h-12 text-xs text-mut">chart appears after 2 closed positions</div>;
   const ys = [0, ...points.map((p) => p.usd)];
   const lo = Math.min(...ys);
   const hi = Math.max(...ys);
