@@ -180,6 +180,30 @@ export const TOOLS: ToolDef[] = [
     run: async () => notYet("M4", "Signal tracking"),
   },
   {
+    name: "screen_memecoins",
+    title: "Memecoin screener",
+    description:
+      "Screen Solana memecoins from Jupiter's live trending, most traded, top organic and new lists. Each token has " +
+      "a safety score and a momentum score (0-100, rankings of current data, not buy signals), risk flags (mint/freeze " +
+      "authority, concentrated holders, thin liquidity, young, sell pressure, dumping...) and its best Meteora SOL " +
+      "pool if any. `filters` takes mcap_min/max, liquidity_min, age_h_min/max, holders_min, top10_max, organic_min, " +
+      "volume_1h_min, volume_24h_min, buy_ratio_1h_min, chg_5m/1h/24h_min/max (%), holder_chg_1h_min, safety_min, " +
+      "momentum_min, safe_only (no red flags), meteora_only.",
+    input: {
+      preset: z.enum(["safe_runners", "dip_recovery", "established", "new_momentum", "lp_candidates"]).optional(),
+      q: z.string().max(64).optional(),
+      filters: z.record(z.union([z.number(), z.boolean()])).optional(),
+      sort: z
+        .enum(["momentum", "safety", "mcap", "liquidity", "volume_1h", "volume_24h", "chg_5m", "chg_1h", "chg_6h",
+          "chg_24h", "holders", "holder_chg_1h", "age_h", "organic_score", "buy_ratio_1h", "traders_1h"])
+        .optional(),
+      order: z.enum(["asc", "desc"]).optional(),
+      limit: z.number().int().min(1).max(50).default(20),
+    },
+    run: (api, a) =>
+      api.get("/v1/memes", { ...(a.filters ?? {}), preset: a.preset, q: a.q, sort: a.sort, order: a.order, limit: a.limit }),
+  },
+  {
     name: "bot_status",
     title: "Paper bot status",
     description:

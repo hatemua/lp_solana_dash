@@ -23,6 +23,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               </Link>
               <nav className="flex gap-4 text-sm text-mut">
                 <Link href="/" className="hover:text-slate-100">Pools</Link>
+                <Link href="/memes" className="hover:text-slate-100">Memecoins</Link>
                 <Link href="/wallet" className="hover:text-slate-100">My positions</Link>
                 <Link href="/bot" className="hover:text-slate-100">Bot</Link>
               </nav>

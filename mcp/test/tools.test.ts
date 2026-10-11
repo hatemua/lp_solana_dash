@@ -27,7 +27,7 @@ function tool(name: string): ToolDef {
 test("the spec's tools are all present", () => {
   assert.deepEqual(TOOLS.map((t) => t.name).sort(), [
     "backtest_results", "best_pools_now", "bot_positions", "bot_status", "exit_check", "get_pool", "get_pool_bins",
-    "get_token", "pool_history", "pool_signal", "search_pools", "signal_stats",
+    "get_token", "pool_history", "pool_signal", "screen_memecoins", "search_pools", "signal_stats",
   ]);
 });
 

@@ -57,7 +57,7 @@ test("streamable HTTP: auth, tools/list and a tool call through a fake API", asy
     assert.equal(init.body.result.serverInfo.name, "lp-solana-dash");
 
     const list = await rpc(mcp.url, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
-    assert.equal(list.body.result.tools.length, 12);
+    assert.equal(list.body.result.tools.length, 13);
     for (const t of list.body.result.tools) assert.equal(t.annotations.readOnlyHint, true);
 
     const call = await rpc(mcp.url, {
