@@ -6,7 +6,7 @@ import { api, qs } from "@/lib/api";
 import { age, num, pct, price, usd } from "@/lib/format";
 
 interface Flag {
-  level: "red" | "warn";
+  level: "red" | "warn" | "info";
   code: string;
   text: string;
 }
@@ -35,6 +35,12 @@ interface MemeRow {
   holder_chg_1h: number | null;
   safety: number;
   momentum: number;
+  narrative: string;
+  tier: string | null;
+  ds_txn_ratio_1h: number | null;
+  has_website?: boolean;
+  has_twitter?: boolean;
+  has_telegram?: boolean;
   flags: Flag[];
   lists: string[];
   meteora_pool: { address: string; name: string | null; tvl: number | null; bin_step: number | null } | null;
@@ -47,7 +53,13 @@ interface MemesResponse {
   sort: string;
   updated_at: number;
   data: MemeRow[];
+  heat: { narrative: string; label: string; rank: number; median_chg_1h: number; tokens: number }[];
 }
+
+const NARRATIVES: Record<string, string> = { ai: "AI", political: "Political", celebrity: "Celebrity", dog: "Dog",
+  cat: "Cat", frog: "Frog", animal: "Other animals", gaming: "Gaming", culture: "Culture / other" };
+const TIERS: Record<string, string> = { blue: "Blue ≥ $100M", large: "Large $10–100M", mid: "Mid $1–10M",
+  small: "Small $100k–1M", micro: "Micro < $100k" };
 
 interface MemePreset {
   id: string;
@@ -89,7 +101,8 @@ const COLUMNS: [string, string, (r: MemeRow) => string][] = [
   ["chg_1h", "1h", (r) => pct(r.chg_1h)],
   ["chg_6h", "6h", (r) => pct(r.chg_6h)],
   ["chg_24h", "24h", (r) => pct(r.chg_24h)],
-  ["buy_ratio_1h", "Buy/sell", (r) => (r.buy_ratio_1h === null ? "–" : `${r.buy_ratio_1h.toFixed(2)}×`)],
+  ["buy_ratio_1h", "Buy/sell vol", (r) => (r.buy_ratio_1h === null ? "–" : `${r.buy_ratio_1h.toFixed(2)}×`)],
+  ["ds_txn_ratio_1h", "Buy/sell txns", (r) => (r.ds_txn_ratio_1h == null ? "–" : `${r.ds_txn_ratio_1h.toFixed(2)}×`)],
   ["traders_1h", "Traders 1h", (r) => num(r.traders_1h)],
   ["holders", "Holders", (r) => num(r.holders)],
   ["holder_chg_1h", "Holders 1h", (r) => pct(r.holder_chg_1h, 2)],
@@ -97,7 +110,8 @@ const COLUMNS: [string, string, (r: MemeRow) => string][] = [
   ["organic_score", "Organic", (r) => num(r.organic_score)],
 ];
 const SORTABLE = new Set(["mcap", "liquidity", "volume_1h", "volume_24h", "chg_5m", "chg_1h", "chg_6h", "chg_24h",
-  "buy_ratio_1h", "traders_1h", "holders", "holder_chg_1h", "age_h", "organic_score", "safety", "momentum"]);
+  "buy_ratio_1h", "traders_1h", "holders", "holder_chg_1h", "age_h", "organic_score", "safety", "momentum",
+  "ds_txn_ratio_1h"]);
 
 function tone(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return "";
@@ -115,7 +129,7 @@ function Flags({ flags }: { flags: Flag[] }) {
     <span className="flex flex-wrap gap-1">
       {flags.map((f) => (
         <span key={f.code} title={f.text}
-          className={`rounded px-1 text-[10px] ${f.level === "red" ? "bg-neg/15 text-neg" : "bg-yellow-400/15 text-yellow-300"}`}>
+          className={`rounded px-1 text-[10px] ${f.level === "red" ? "bg-neg/15 text-neg" : f.level === "warn" ? "bg-yellow-400/15 text-yellow-300" : "bg-line text-mut"}`}>
           {f.code.replace(/_/g, " ")}
         </span>
       ))}
@@ -132,6 +146,8 @@ export function MemesView() {
   const [q, setQ] = useState("");
   const [safeOnly, setSafeOnly] = useState(false);
   const [meteoraOnly, setMeteoraOnly] = useState(false);
+  const [narrative, setNarrative] = useState("");
+  const [tier, setTier] = useState("");
   const [showFilters, setShowFilters] = useState(false);
   const [data, setData] = useState<MemesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,8 +157,8 @@ export function MemesView() {
   }, []);
 
   const params = useMemo(() => ({ ...filters, preset, sort, order, q, limit: 200,
-    safe_only: safeOnly ? "true" : "", meteora_only: meteoraOnly ? "true" : "" }),
-  [filters, preset, sort, order, q, safeOnly, meteoraOnly]);
+    safe_only: safeOnly ? "true" : "", meteora_only: meteoraOnly ? "true" : "", narrative, tier }),
+  [filters, preset, sort, order, q, safeOnly, meteoraOnly, narrative, tier]);
   const paramsRef = useRef(params);
   paramsRef.current = params;
 
@@ -201,6 +217,14 @@ export function MemesView() {
         <button className="btn" onClick={() => setShowFilters(!showFilters)}>Filters {showFilters ? "▴" : "▾"}</button>
         <input className="input max-w-[200px]" placeholder="Search symbol, name or mint" value={q}
           onChange={(e) => setQ(e.target.value)} />
+        <select className="input w-auto" value={narrative} onChange={(e) => setNarrative(e.target.value)}>
+          <option value="">All narratives</option>
+          {Object.entries(NARRATIVES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select className="input w-auto" value={tier} onChange={(e) => setTier(e.target.value)}>
+          <option value="">All sizes</option>
+          {Object.entries(TIERS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
         <label className="flex items-center gap-1 text-sm text-mut">
           <input type="checkbox" checked={safeOnly} onChange={(e) => setSafeOnly(e.target.checked)} /> no red flags
         </label>
@@ -215,7 +239,20 @@ export function MemesView() {
       <p className="text-xs text-mut">
         {preset ? presets.find((p) => p.id === preset)?.description : "All memecoins in Jupiter's trending, most traded, top organic and new lists."}
         {" "}Safety and momentum are 0–100 rankings of the current data, not buy signals. Memecoins can go to zero.
+        {" "}Data: Jupiter + DexScreener.
       </p>
+      {data?.heat?.length ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-mut">Narrative heat:</span>
+          {data.heat.map((h) => (
+            <button key={h.narrative} onClick={() => setNarrative(narrative === h.narrative ? "" : h.narrative)}
+              className={`rounded border px-2 py-0.5 num ${narrative === h.narrative ? "border-acc text-acc" : "border-line"}`}
+              title={`${h.tokens} liquid tokens`}>
+              #{h.rank} {h.label} <span className={tone(h.median_chg_1h)}>{pct(h.median_chg_1h)}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {showFilters && (
         <div className="card grid grid-cols-2 gap-3 p-3 sm:grid-cols-4 lg:grid-cols-8">
@@ -254,8 +291,8 @@ export function MemesView() {
                 <td className="whitespace-nowrap px-2 py-1.5">
                   <span className="font-medium text-slate-100">{r.symbol ?? r.mint.slice(0, 6)}</span>
                   {r.verified && <span className="ml-1 text-[10px] text-acc" title="Jupiter verified">✓</span>}
-                  <div className="max-w-[160px] truncate text-[11px] text-mut" title={r.name ?? ""}>
-                    {r.name}{r.launchpad ? ` · ${r.launchpad}` : ""}
+                  <div className="max-w-[180px] truncate text-[11px] text-mut" title={r.name ?? ""}>
+                    {NARRATIVES[r.narrative] ?? r.narrative}{r.tier ? ` · ${r.tier}` : ""} · {r.name}
                   </div>
                 </td>
                 <td className="px-2 py-1.5 text-right"><Score v={r.safety} kind="safety" /></td>
