@@ -26,7 +26,8 @@ NOT_MEME_MINTS = {
 }
 NOT_MEME_TAGS = {"stablecoin", "lst", "lrt", "xstocks", "stocks", "equities", "tokenized-stock", "rwa", "defi", "infra"}
 NOT_MEME_SYMBOLS = {"SOL", "WSOL", "USDC", "USDT", "PYUSD", "USDS", "USD1", "EURC", "WBTC", "CBBTC", "WETH", "JLP",
-                    "BTC", "ETH", "ZEC", "XMR", "QNT", "WNEAR", "HYPE", "ENA", "XRP", "BNB", "SUI", "LINK"}
+                    "BTC", "ETH", "ZEC", "XMR", "QNT", "WNEAR", "HYPE", "ENA", "XRP", "BNB", "SUI", "LINK",
+                    "STRK", "PYTH", "JTO", "W", "RAY", "ORCA", "MET", "DRIFT", "KMNO", "TNSR"}
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,7 @@ def is_meme(t: dict[str, Any]) -> bool:
     tags = {str(x).lower() for x in t.get("tags") or []}
     return (t.get("id") not in NOT_MEME_MINTS and not tags & NOT_MEME_TAGS
             and str(t.get("symbol") or "").upper() not in NOT_MEME_SYMBOLS
+            and "USD" not in str(t.get("symbol") or "").upper()             # stables: JupUSD, USDe, ...
             and not str(t.get("name") or "").lower().startswith("wrapped "))
 
 
