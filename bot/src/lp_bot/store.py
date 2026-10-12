@@ -28,7 +28,24 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS pool_analysis (
         pool text PRIMARY KEY, at timestamptz NOT NULL, name text, choice text, expected_pct double precision,
         data jsonb NOT NULL)""",
-    # live bot: one row per real position, linked to the paper position it mirrors
+    # users' bots: each follows one house strategy, on paper or with real money (follow.py)
+    """CREATE TABLE IF NOT EXISTS lp_bots (
+        id bigserial PRIMARY KEY, user_id bigint NOT NULL, name text NOT NULL, strategy text NOT NULL,
+        mode text NOT NULL CHECK (mode IN ('paper', 'live')), owner_wallet text, position_sol double precision NOT NULL,
+        max_open int NOT NULL DEFAULT 1, take_profit_pct double precision, stop_loss_pct double precision,
+        day_loss_sol double precision, day_target_sol double precision, status text NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'paused', 'stopping', 'stopped')), close_all boolean NOT NULL DEFAULT false,
+        pending jsonb, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())""",
+    "CREATE INDEX IF NOT EXISTS lp_bots_user ON lp_bots (user_id)",
+    """CREATE TABLE IF NOT EXISTS lp_bot_positions (
+        id bigserial PRIMARY KEY, bot_id bigint NOT NULL REFERENCES lp_bots(id) ON DELETE CASCADE,
+        paper_id bigint NOT NULL, pool text NOT NULL, name text, mint text, shape text, status text NOT NULL,
+        opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz, sol_size double precision NOT NULL,
+        net_pct double precision, peak_pct double precision, exit_reason text, pnl_sol double precision,
+        position text, unwind_position text, sol_flow double precision NOT NULL DEFAULT 0,
+        txs jsonb NOT NULL DEFAULT '[]', error text)""",
+    "CREATE INDEX IF NOT EXISTS lp_bot_positions_bot ON lp_bot_positions (bot_id, status)",
+    # history of the first live mirror (one global wallet, before users' bots)
     """CREATE TABLE IF NOT EXISTS live_positions (
         id bigserial PRIMARY KEY, paper_id bigint NOT NULL, strategy text NOT NULL, pool text NOT NULL, name text,
         mint text, status text NOT NULL, opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz,

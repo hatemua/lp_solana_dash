@@ -5,14 +5,13 @@ same-site Origin. Virtual money only: nothing here can touch a wallet, sign or s
 """
 
 import json
-import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ..auth import SESSION_COOKIE, digest
+from ..auth import request_user
 from ..config import Settings
 from . import store
 from .categories import NARRATIVE_LABELS, TIER_LABELS
@@ -50,22 +49,12 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         return state["engine"]
 
     async def user_id(request: Request, write: bool = False) -> int:
-        if write:                                  # changes: web session only, from our own site
-            origin = request.headers.get("origin")
-            if origin and origin not in cfg.cors_origins:
-                raise HTTPException(403, "cross-site request refused")
-        token = request.cookies.get(SESSION_COOKIE)
-        if token:
-            found = await store.q(db(), "SELECT user_id FROM user_sessions WHERE token_hash = :h "
-                                        "AND expires_at > now()", h=digest(token))
-            if found:
-                return int(found[0]["user_id"])
-        if not write and (m := re.match(r"^Bearer\s+(\S+)$", request.headers.get("authorization", ""), re.I)):
-            found = await store.q(db(), "SELECT user_id FROM oauth_tokens WHERE token_hash = :h AND kind = 'access' "
-                                        "AND NOT revoked AND expires_at > now()", h=digest(m.group(1)))
-            if found:
-                return int(found[0]["user_id"])
-        raise HTTPException(401, "sign in to use paper trading")
+        try:
+            return await request_user(db(), cfg, request, write)
+        except HTTPException as e:
+            if e.status_code == 401:
+                raise HTTPException(401, "sign in to use paper trading") from None
+            raise
 
     async def own_bot(uid: int, bot_id: int) -> dict[str, Any]:
         found = await store.bots(db(), bot_id=bot_id)

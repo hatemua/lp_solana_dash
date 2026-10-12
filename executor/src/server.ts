@@ -1,7 +1,7 @@
 /**
  * Executor: the only service that talks to the Meteora DLMM SDK. Listens on the internal network only.
  * Reads pool bins and wallet positions, and builds UNSIGNED LP transactions for the user's own wallet to sign.
- * It holds no user key (see wallet.ts). The live bot's own wallet, when configured, lives in bot.ts.
+ * It holds no user key (see wallet.ts). Users' real-money bot wallets are derived in bot.ts.
  */
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
@@ -107,10 +107,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return send(res, 200, await quote(connection, dlmm, Number(url.searchParams.get("min_bin_id")),
         Number(url.searchParams.get("max_bin_id"))));
     }
-    if (url.pathname === "/v1/bot/wallet" && req.method === "GET") return send(res, 200, await Bot.wallet(connection));
+    const whoQ = { bot_id: Number(url.searchParams.get("bot_id")), owner: url.searchParams.get("owner") ?? "" };
+    if (req.method === "GET" && url.pathname === "/v1/bot/access") {
+      return send(res, 200, Bot.access(url.searchParams.get("owner") ?? ""));
+    }
+    if (req.method === "GET" && url.pathname === "/v1/bot/wallet") return send(res, 200, await Bot.wallet(connection, whoQ));
     if (req.method === "GET" && url.pathname === "/v1/bot/positions") {
-      const w = await Bot.wallet(connection);
-      return send(res, 200, w.address ? await userPositions(connection, DLMM, w.address) : { positions: [] });
+      const w = await Bot.wallet(connection, whoQ);
+      return send(res, 200, await userPositions(connection, DLMM, w.address));
     }
     if (req.method === "POST" && url.pathname === "/v1/bot/fund-tx") {
       return send(res, 200, await Bot.fundTx(connection, await readJson(req) as never));
@@ -119,7 +123,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return send(res, 200, await Bot.withdraw(connection, await readJson(req) as never));
     }
     if (req.method === "POST" && url.pathname === "/v1/bot/verify") {
-      return send(res, 200, Bot.verifyOwner(await readJson(req) as never));
+      return send(res, 200, Bot.verifySigned(await readJson(req) as never));
     }
     const botM = url.pathname.match(new RegExp(`^/v1/bot/pools/(${B58})/(open|unwind|close)$`));
     if (req.method === "POST" && botM) {

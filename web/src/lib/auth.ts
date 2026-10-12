@@ -14,7 +14,7 @@ export interface Connection {
 }
 
 /** Auth calls carry the session cookie (HttpOnly, set by lp.api.joulity.com). */
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: "include",

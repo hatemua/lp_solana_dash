@@ -97,7 +97,7 @@ def test_oauth_flow(client) -> None:  # type: ignore[no-untyped-def]
 
     client.cookies.clear()
     me = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {access}"}).json()
-    assert me["via"] == "oauth" and me["user"]["email"] == email and me["scope"] == "mcp:read"
+    assert me["via"] == "oauth" and me["user"]["email"] == email and me["scope"] == "mcp:read bots:suggest"
 
     rt = client.post("/oauth/token", data={"grant_type": "refresh_token", "refresh_token": refresh, "client_id": cid})
     assert rt.status_code == 200 and rt.json()["access_token"] != access

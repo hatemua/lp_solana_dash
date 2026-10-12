@@ -1,7 +1,8 @@
 """Accounts (email + password, session cookie) and an OAuth 2.1 authorization server for the MCP.
 
 OAuth: authorization code + PKCE (S256 only), public clients, dynamic client registration (RFC 7591), metadata
-(RFC 8414, RFC 9728), refresh tokens rotated on use. One scope: mcp:read. Secrets are stored as SHA-256 hashes only.
+(RFC 8414, RFC 9728), refresh tokens rotated on use. Scopes: mcp:read (read data) and bots:suggest (propose take
+profit / stop loss for your bots; a real-money bot needs your click to apply it). Secrets are stored as SHA-256 hashes.
 """
 
 import base64
@@ -27,6 +28,8 @@ from .config import Settings
 log = logging.getLogger("lp_api.auth")
 
 SCOPE = "mcp:read"
+BOTS_SCOPE = "bots:suggest"
+GRANTED = f"{SCOPE} {BOTS_SCOPE}"         # what a new connection gets (consent page)
 SESSION_COOKIE = "lp_session"
 SESSION_DAYS = 30
 CODE_TTL_S = 300
@@ -156,8 +159,9 @@ button.ok{{background:var(--acc);border-color:var(--acc);color:#0b0e14;font-weig
 </style></head><body><form class="card" method="post" action="/oauth/authorize">
 <h1>Allow <b>{client}</b> to use LP Dash?</h1>
 <p class="mut">Signed in as {email}. Redirects to {host}.</p>
-<ul><li>Read pool data, charts, bins and LP signals</li>
-<li>Read-only: it cannot trade, sign or move funds</li></ul>
+<ul><li>Read pool data, charts, bins and LP signals, and your bots</li>
+<li>Suggest take profit / stop loss for your bots (a real-money bot changes only when you click Apply)</li>
+<li>It cannot trade, sign, fund, withdraw or move funds</li></ul>
 {hidden}
 <div class="row"><button name="decision" value="deny">Deny</button>
 <button class="ok" name="decision" value="allow">Allow</button></div></form></body></html>"""
@@ -294,14 +298,14 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "scopes_supported": [SCOPE],
+            "scopes_supported": [SCOPE, BOTS_SCOPE],
             "authorization_response_iss_parameter_supported": True,
         }
 
     @r.get("/.well-known/oauth-protected-resource")
     @r.get("/.well-known/oauth-protected-resource/mcp")
     async def pr_metadata() -> dict[str, Any]:
-        return {"resource": resource, "authorization_servers": [issuer], "scopes_supported": [SCOPE],
+        return {"resource": resource, "authorization_servers": [issuer], "scopes_supported": [SCOPE, BOTS_SCOPE],
                 "bearer_methods_supported": ["header"], "resource_name": "LP Solana Dash MCP (read-only)"}
 
     # ------------------------------------------------------------------ dynamic client registration
@@ -327,7 +331,7 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         return JSONResponse({"client_id": client_id, "client_id_issued_at": int(time.time()),
                              "client_name": name, "redirect_uris": uris, "token_endpoint_auth_method": "none",
                              "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"],
-                             "scope": SCOPE}, status_code=201)
+                             "scope": GRANTED}, status_code=201)
 
     # ------------------------------------------------------------------ authorize
     AUTHZ_KEYS = ("response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state",
@@ -349,7 +353,7 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         if p.get("code_challenge_method") != "S256" or not re.fullmatch(r"[A-Za-z0-9_\-]{43}",
                                                                           p.get("code_challenge", "")):
             return client, None, "invalid_request"
-        if p.get("scope") and set(p["scope"].split()) - {SCOPE}:
+        if p.get("scope") and set(p["scope"].split()) - {SCOPE, BOTS_SCOPE}:
             return client, None, "invalid_scope"
         if p.get("resource") and p["resource"].rstrip("/") not in (resource, issuer):
             return client, None, "invalid_target"
@@ -406,7 +410,7 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         await q("INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, scope, "
                 "expires_at) VALUES (:h, :c, :u, :r, :cc, :s, now() + make_interval(secs => :t))",
                 h=digest(code), c=p["client_id"], u=s[0]["id"], r=p["redirect_uri"], cc=p["code_challenge"],
-                s=SCOPE, t=CODE_TTL_S)
+                s=GRANTED, t=CODE_TTL_S)
         log.info("oauth grant user=%s client=%s", s[0]["id"], p["client_id"])
         params = {"code": code, "iss": issuer}
         if p.get("state"):
@@ -418,15 +422,15 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         return JSONResponse({"error": error, "error_description": desc}, status_code=status,
                             headers={"Cache-Control": "no-store"})
 
-    async def issue(client_id: str, user_id: int) -> JSONResponse:
+    async def issue(client_id: str, user_id: int, scope: str) -> JSONResponse:
         access, refresh = new_secret(), new_secret()
         await q("INSERT INTO oauth_tokens (token_hash, kind, client_id, user_id, scope, expires_at) VALUES "
                 "(:a, 'access', :c, :u, :s, now() + make_interval(secs => :ta)), "
                 "(:r, 'refresh', :c, :u, :s, now() + make_interval(days => :tr))",
-                a=digest(access), r=digest(refresh), c=client_id, u=user_id, s=SCOPE, ta=ACCESS_TTL_S,
+                a=digest(access), r=digest(refresh), c=client_id, u=user_id, s=scope, ta=ACCESS_TTL_S,
                 tr=REFRESH_TTL_DAYS)
         return JSONResponse({"access_token": access, "token_type": "Bearer", "expires_in": ACCESS_TTL_S,
-                             "refresh_token": refresh, "scope": SCOPE},
+                             "refresh_token": refresh, "scope": scope},
                             headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
     @r.post("/oauth/token")
@@ -435,7 +439,8 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
         client_id = f.get("client_id", "")[:80]
         if f.get("grant_type") == "authorization_code":
             got = await q("UPDATE oauth_codes SET used = true WHERE code_hash = :h AND NOT used AND expires_at > now() "
-                          "RETURNING client_id, user_id, redirect_uri, code_challenge", h=digest(f.get("code", "")))
+                          "RETURNING client_id, user_id, redirect_uri, code_challenge, scope",
+                          h=digest(f.get("code", "")))
             if not got:
                 return token_error("invalid_grant", "code is invalid, expired or already used")
             c = got[0]
@@ -443,14 +448,14 @@ def router(cfg: Settings, state: dict[str, Any]) -> APIRouter:
                 return token_error("invalid_grant", "client_id or redirect_uri does not match the code")
             if not pkce_ok(f.get("code_verifier", ""), c["code_challenge"]):
                 return token_error("invalid_grant", "PKCE verification failed")
-            return await issue(c["client_id"], c["user_id"])
+            return await issue(c["client_id"], c["user_id"], c["scope"])
         if f.get("grant_type") == "refresh_token":
             got = await q("UPDATE oauth_tokens SET revoked = true WHERE token_hash = :h AND kind = 'refresh' "
-                          "AND NOT revoked AND expires_at > now() RETURNING client_id, user_id",
+                          "AND NOT revoked AND expires_at > now() RETURNING client_id, user_id, scope",
                           h=digest(f.get("refresh_token", "")))
             if not got or got[0]["client_id"] != client_id:
                 return token_error("invalid_grant", "refresh token is invalid, expired or revoked")
-            return await issue(got[0]["client_id"], got[0]["user_id"])
+            return await issue(got[0]["client_id"], got[0]["user_id"], got[0]["scope"])   # same scope as granted
         return token_error("unsupported_grant_type", "use authorization_code or refresh_token")
 
     @r.post("/oauth/revoke")
@@ -467,3 +472,33 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         for stmt in SCHEMA:
             await conn.execute(text(stmt))
+
+
+async def request_user(engine: AsyncEngine, cfg: Settings, request: Request, write: bool = False,
+                       scope: str | None = None) -> int:
+    """The signed-in user's id: the web session cookie (changes only from our own site), or an OAuth access token for
+    reads and, when `scope` is given and granted, for that one kind of change. 401 otherwise."""
+    async def one(sql: str, **params: Any) -> dict[str, Any] | None:
+        async with engine.connect() as conn:
+            row = (await conn.execute(text(sql), params)).first()
+            return dict(row._mapping) if row else None
+
+    if write:
+        origin = request.headers.get("origin")
+        if origin and origin not in cfg.cors_origins:
+            raise HTTPException(403, "cross-site request refused")
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        found = await one("SELECT user_id FROM user_sessions WHERE token_hash = :h AND expires_at > now()",
+                          h=digest(token))
+        if found:
+            return int(found["user_id"])
+    m = re.match(r"^Bearer\s+(\S+)$", request.headers.get("authorization", ""), re.I)
+    if m and (not write or scope):
+        found = await one("SELECT user_id, scope FROM oauth_tokens WHERE token_hash = :h AND kind = 'access' "
+                          "AND NOT revoked AND expires_at > now()", h=digest(m.group(1)))
+        if found:
+            if write and scope not in found["scope"].split():
+                raise HTTPException(403, f"this connection lacks the {scope} permission: reconnect it to allow it")
+            return int(found["user_id"])
+    raise HTTPException(401, "sign in first")

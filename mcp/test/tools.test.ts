@@ -26,8 +26,9 @@ function tool(name: string): ToolDef {
 
 test("the spec's tools are all present", () => {
   assert.deepEqual(TOOLS.map((t) => t.name).sort(), [
-    "analyze_pools", "backtest_results", "best_pools_now", "bot_positions", "bot_status", "exit_check", "get_pool", "get_pool_bins",
-    "get_token", "pool_history", "pool_signal", "screen_memecoins", "search_pools", "signal_stats",
+    "analyze_pools", "backtest_results", "best_pools_now", "bot_positions", "bot_status", "bot_strategies", "exit_check",
+    "get_pool", "get_pool_bins", "get_token", "my_bots", "pool_history", "pool_signal", "screen_memecoins",
+    "search_pools", "signal_stats", "suggest_bot_settings",
   ]);
 });
 
@@ -37,7 +38,11 @@ test("no tool can reach a transaction or wallet route", async () => {
     address: POOL, mint: POOL, range_low: 1, range_high: 2, entry_time: 1_700_000_000, amount_usd: 100,
     strategy: "any", limit: 5, kind: "ohlcv", timeframe: "5m", hours: 24, live: false, each_side: 20,
   };
-  for (const t of TOOLS) await t.run(api, sample);
+  const bots = {
+    get: async (path: string) => (calls.push({ path }), { bots: [] }),
+    suggest: async (id: number) => (calls.push({ path: `/v1/lpbots/${id}/suggest` }), {}),
+  };
+  for (const t of TOOLS) await t.run(api, { ...sample, bot_id: 1, take_profit_pct: 5 }, bots);
   for (const kind of ["fee_tvl", "flow"]) await tool("pool_history").run(api, { ...sample, kind });
   assert.ok(calls.length >= 9);
   for (const c of calls) assert.doesNotMatch(c.path, /\/v1\/(tx|wallet)\b/);
@@ -46,6 +51,13 @@ test("no tool can reach a transaction or wallet route", async () => {
     const src = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
     assert.doesNotMatch(src, /\/v1\/tx|\/v1\/wallet|method:\s*"(POST|PUT|DELETE|PATCH)"/);
   }
+  // the bots client posts to one route only: a take profit / stop loss suggestion
+  const bsrc = readFileSync(new URL("../src/bots.ts", import.meta.url), "utf8");
+  assert.equal((bsrc.match(/method:\s*"POST"/g) ?? []).length, 1);
+  assert.match(bsrc, /\/v1\/lpbots\/\$\{botId\}\/suggest/);
+  assert.doesNotMatch(bsrc, /\/v1\/tx|\/v1\/wallet|\/v1\/bot\/|withdraw|fund-tx|\/owner/);
+  // only the suggestion tool is marked as a change
+  assert.deepEqual(TOOLS.filter((t) => t.write).map((t) => t.name), ["suggest_bot_settings"]);
 });
 
 test("search_pools passes filters and trims rows", async () => {
@@ -86,4 +98,10 @@ test("bearer auth", () => {
   assert.ok(!bearerOk(undefined, tok));
   assert.ok(!bearerOk(`Basic ${tok}`, tok));
   assert.ok(!bearerOk("Bearer ", ""));
+});
+
+test("bot tools need a signed-in user", async () => {
+  const { api } = recorder();
+  await assert.rejects(tool("my_bots").run(api, {}, null), /OAuth/);
+  await assert.rejects(tool("suggest_bot_settings").run(api, { bot_id: 1, take_profit_pct: 5 }, null), /OAuth/);
 });

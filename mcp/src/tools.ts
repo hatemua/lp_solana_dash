@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { Api } from "./api.js";
+import type { Bots } from "./bots.js";
 
 /**
- * Read-only tools. None of them can build, sign or send a transaction, or move funds: the API client only
- * issues GET requests and no tool calls a transaction or wallet route (enforced by test/tools.test.ts).
+ * Tools. None of them can build, sign or send a transaction, or move funds: the API client only issues GET requests
+ * and no tool calls a transaction or wallet route (enforced by test/tools.test.ts). The one change a tool can make is
+ * suggest_bot_settings (take profit / stop loss of the user's own bot, through bots.ts).
  */
 
 const ADDR = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/, "base58 Solana address");
@@ -40,8 +42,14 @@ export interface ToolDef {
   description: string;
   input: Record<string, z.ZodTypeAny>;
   // args are validated by the MCP SDK against `input` before run() is called
+  write?: boolean;                      // changes something (not read-only)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  run: (api: Api, args: any) => Promise<unknown>;
+  run: (api: Api, args: any, bots: Bots | null) => Promise<unknown>;
+}
+
+function signedIn(bots: Bots | null): Bots {
+  if (!bots) throw new Error("connect with OAuth (your LP Dash account) to see and tune your bots");
+  return bots;
 }
 
 export const TOOLS: ToolDef[] = [
@@ -244,5 +252,47 @@ export const TOOLS: ToolDef[] = [
       limit: z.number().int().min(1).max(100).default(20),
     },
     run: (api, a) => (a.pool ? api.get(`/v1/analyze/${a.pool}`) : api.get("/v1/analyze", { limit: a.limit })),
+  },
+  {
+    name: "bot_strategies",
+    title: "Strategies a bot can follow",
+    description:
+      "The house LP strategies a user's bot can follow (paper or real money), with their last 7 days of closed " +
+      "positions: count, win rate, average / median win / median loss / best / worst net %, P&L. Use it to propose " +
+      "a take profit (e.g. near the median win) and a stop loss (beyond the usual losses, before the worst).",
+    input: {},
+    run: (api) => api.get("/v1/lpbots/strategies"),
+  },
+  {
+    name: "my_bots",
+    title: "My bots",
+    description:
+      "The signed-in user's LP bots: strategy followed, paper or real money, status, take profit / stop loss, daily " +
+      "limits, results (closed, wins, P&L in SOL, today), the latest positions with their exits, the last reason a " +
+      "trade was skipped, any pending suggestion, and for real-money bots the wallet address and balance.",
+    input: {},
+    run: async (_api, _a, bots) => {
+      const d = (await signedIn(bots).get("/v1/lpbots")) as { bots?: { positions?: unknown[] }[] };
+      return { bots: (d.bots ?? []).map((b) => ({ ...b, positions: (b.positions ?? []).slice(0, 10) })) };
+    },
+  },
+  {
+    name: "suggest_bot_settings",
+    title: "Suggest take profit / stop loss",
+    description:
+      "Suggest a take profit and/or stop loss (net % of a position) for one of the user's bots, with a short reason. " +
+      "A paper bot applies it at once; a real-money bot shows it on the dashboard and changes only when the user " +
+      "clicks Apply. Base it on bot_strategies and my_bots, and say why. Cannot trade, fund, withdraw or close.",
+    write: true,
+    input: {
+      bot_id: z.number().int().min(1),
+      take_profit_pct: z.number().min(1).max(100).optional().describe("close a position at +this % net"),
+      stop_loss_pct: z.number().min(1).max(50).optional().describe("close a position at -this % net"),
+      reason: z.string().max(400).default(""),
+    },
+    run: async (_api, a, bots) =>
+      signedIn(bots).suggest(a.bot_id, {
+        take_profit_pct: a.take_profit_pct, stop_loss_pct: a.stop_loss_pct, reason: a.reason,
+      }),
   },
 ];

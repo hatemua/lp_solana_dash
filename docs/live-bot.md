@@ -1,41 +1,52 @@
-# Live bot (real money)
+# Your bots (paper and real money)
 
-The paper bot always runs. With `BOT_LIVE=true` it also mirrors one strategy (`LIVE_STRATEGY`, default `auto`) with
-small real Meteora DLMM positions:
+On the /bot page a signed-in user creates bots. Each bot **follows one house strategy** (`auto`, `v2_wide`, ...), the
+strategies the bot service runs all the time on real pool data:
 
-| paper position | real position (bot wallet) |
+| house position | your bot |
 |---|---|
-| opens (spot shapes only) | swap half the SOL into the token (Jupiter), open a spot position, +/- the same bins (max 34) |
-| starts unwinding | close the position, offer all its tokens in 5 ask bins right above the price |
-| closes | close everything, claim fees, swap every token of that pool back to SOL |
+| opens | opens one too, if the bot has a free slot (`max_open`) and is not stopped for the day |
+| net % reaches your take profit / stop loss | closes (`take_profit` / `stop_loss`) |
+| starts unwinding (real money) | closes its position and offers its tokens in 5 ask bins above the price |
+| closes | closes too (same exit reason) |
 
-The result of a real position is measured from the bot wallet's SOL balance around each step (one wallet operation
-runs at a time), so it includes every swap, fee, tip and the non-refundable bin array rent.
+- **Paper**: the result is the bot's size x the house position's net %. No wallet, no money.
+- **Real money**: a real Meteora spot position from the bot's own wallet (half the SOL swapped into the token with
+  Jupiter, +/- the same bins, max 34). The result is measured from the wallet's SOL balance around each step, so it
+  includes every swap, fee, tip and the non-refundable bin array rent. Only spot shapes, so only `auto` for now.
 
-## Limits
+Per bot: size per trade (SOL), max open, take profit %, stop loss %, daily loss limit and daily target (SOL; no new
+trades for the rest of the UTC day once reached). A real-money bot always keeps 0.05 SOL for fees and rent.
 
-- `LIVE_POSITION_SOL` per position (0.1), `LIVE_MAX_OPEN` at once (1), a 0.05 SOL reserve kept for fees and rent.
-- `LIVE_DAILY_LOSS_SOL` (0.05): no new real positions for the rest of the UTC day below it.
-- The owner wallet (`BOT_OWNER_WALLET`) can, from the /bot page, sign a message (no transaction) to: pause, resume,
-  close all now, withdraw all. A withdrawal can only go to the owner wallet. The signed message expires after 2 min
-  and can't be reused.
+## Who can do what
+
+| action | needs |
+|---|---|
+| create a paper bot, change settings, pause / resume, stop, delete | signed in (web session) |
+| suggest take profit / stop loss | the MCP connection (`bots:suggest` scope): a paper bot takes it at once, a real-money bot shows "Claude suggests ... Apply" |
+| create a real-money bot | signed in + your wallet signs a message + your wallet is on `LIVE_WALLETS` |
+| fund | a transfer you sign in your wallet, from the owner wallet to the bot wallet |
+| close all, withdraw, delete a real-money bot | the owner wallet signs a fresh message (2 min, single use); a withdrawal goes only to the owner wallet |
+
+No MCP tool can trade, sign, fund, close or withdraw. Real money is invite-only (`LIVE_WALLETS`): holding other
+people's funds needs a lawyer, terms and a security review first.
 
 ## Keys
 
-- The bot wallet key is `BOT_WALLET_SECRET` (JSON byte array) in the server `.env`, generated on the server. Only the
-  executor container receives it; it is removed from the process environment at start and never logged or returned.
-  It is not in git, not in the database, not in the bot, API or MCP services.
-- Back it up: copy the line from the server `.env` into a password manager (or import it into a wallet app). If the
-  server is lost without a backup, the funds in the bot wallet are lost.
-- Funding: the /bot page builds a plain SOL transfer from the connected wallet to the bot wallet; the user signs it
-  in their own wallet.
-- No MCP tool can move funds: the MCP only calls read-only API routes.
+- One secret: `BOT_MASTER_SEED` (32 random bytes, hex) in the server `.env`, given only to the executor, removed from
+  its environment at start. It is not in git, not in the database, not in the bot, API or MCP services.
+- Each bot's wallet = `HMAC-SHA256(master, "lp-dash-bot:{bot_id}:{owner wallet}")` as an ed25519 seed, derived in memory
+  when needed. A request naming another owner derives another (empty) wallet.
+- **Back up the master seed** (password manager). With it and a bot's id and owner, its wallet can be rebuilt; without
+  it, the funds in every bot wallet are lost if the server is lost.
 
-## Turning it on
+## Turning real money on
 
 1. `RPC_URL` = a Helius URL (public RPCs drop transactions).
-2. Generate the key on the server (prints only the address):
-   `docker compose ... run --rm --no-deps --entrypoint node executor -e "const {Keypair}=require('@solana/web3.js');const k=Keypair.generate();console.log('BOT_WALLET_SECRET='+JSON.stringify(Array.from(k.secretKey)));console.error(k.publicKey.toBase58())" >> .env`
-3. `BOT_OWNER_WALLET=<your wallet address>`, then rebuild executor, bot, api.
-4. Fund the bot wallet from the /bot page, then `BOT_LIVE=true` and rebuild the bot.
-5. Kill switch: "Close all now" on the /bot page, or `BOT_LIVE=false` and rebuild the bot.
+2. Generate the seed on the server (prints nothing):
+   `echo "BOT_MASTER_SEED=$(openssl rand -hex 32)" >> .env && chmod 600 .env`
+3. `LIVE_WALLETS=<your wallet address>` and `LIVE_ENABLED=true`, then rebuild executor and bot.
+4. On /bot: connect the wallet, New bot, Real money, sign, then "Send to bot wallet".
+5. Kill switches: "Close all now" on the bot, or `LIVE_ENABLED=false` (nothing new opens; closing still works).
+
+History: the first live mirror (one global wallet, `live_positions`) was replaced by these bots on 2026-10-12.

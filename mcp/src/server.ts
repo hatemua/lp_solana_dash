@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { apiClient, ApiError, type Api } from "./api.js";
 import { bearerOk, oauthUser } from "./auth.js";
+import { botsClient, type Bots } from "./bots.js";
 import { TOOLS } from "./tools.js";
 
 const PORT = Number(process.env.MCP_PORT ?? 8100);
@@ -12,11 +13,13 @@ const PUBLIC_URL = (process.env.PUBLIC_API_URL ?? "https://lp.api.joulity.com").
 const VERSION = "0.1.0";
 
 const INSTRUCTIONS =
-  "LP Solana Dash: Meteora DLMM pool data and LP signals (read-only). Start with best_pools_now or search_pools, " +
-  "then pool_signal / get_pool_bins / pool_history for a pool, and exit_check for an open range. Signals are v0 " +
-  "heuristics, not yet validated by a backtest: treat them as analysis, not advice. No tool can trade or sign.";
+  "LP Solana Dash: Meteora DLMM pool data and LP signals. Start with best_pools_now or search_pools, then " +
+  "pool_signal / get_pool_bins / pool_history for a pool, and exit_check for an open range. Signals are heuristics: " +
+  "treat them as analysis, not advice. The user's bots: my_bots, bot_strategies, and suggest_bot_settings to propose " +
+  "a take profit / stop loss (real-money bots change only when the user clicks Apply). No tool can trade, sign, fund " +
+  "or withdraw.";
 
-export function buildServer(api: Api): McpServer {
+export function buildServer(api: Api, bots: Bots | null = null): McpServer {
   const server = new McpServer({ name: "lp-solana-dash", version: VERSION }, { instructions: INSTRUCTIONS });
   for (const t of TOOLS) {
     server.registerTool(
@@ -25,11 +28,11 @@ export function buildServer(api: Api): McpServer {
         title: t.title,
         description: t.description,
         inputSchema: t.input,
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        annotations: { readOnlyHint: !t.write, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
       async (args: unknown) => {
         try {
-          const data = await t.run(api, args);
+          const data = await t.run(api, args, bots);
           return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
         } catch (e) {
           const msg = e instanceof ApiError ? `API ${e.status}: ${e.message}` : (e as Error).message;
@@ -62,13 +65,13 @@ export async function handle(
   if (path === "/health") return send(res, 200, { ok: true, version: VERSION, tools: TOOLS.length });
   if (path !== "/mcp") return send(res, 404, { error: "not found" });
   // OAuth access token (claude.ai, Claude Desktop, Claude Code) or the optional static token (scripts)
-  const authed =
-    bearerOk(req.headers.authorization, token) ||
-    (await oauthUser(req.headers.authorization, apiUrl, clientIp(req))) !== null;
+  const staticOk = bearerOk(req.headers.authorization, token);
+  const user = staticOk ? null : await oauthUser(req.headers.authorization, apiUrl, clientIp(req));
+  const authed = staticOk || user !== null;
   if (!authed) {
     const meta = `${publicUrl}/.well-known/oauth-protected-resource/mcp`;
     return send(res, 401, { error: "invalid_token", error_description: "sign in with OAuth" }, {
-      "www-authenticate": `Bearer resource_metadata="${meta}", scope="mcp:read"`,
+      "www-authenticate": `Bearer resource_metadata="${meta}", scope="mcp:read bots:suggest"`,
     });
   }
   if (req.method !== "POST") {
@@ -77,7 +80,9 @@ export async function handle(
       allow: "POST",
     });
   }
-  const server = buildServer(apiClient(apiUrl, clientIp(req)));
+  // the user's own token goes to the API only for their bots (bots.ts); the static token has no user
+  const bots = user && req.headers.authorization ? botsClient(apiUrl, req.headers.authorization, clientIp(req)) : null;
+  const server = buildServer(apiClient(apiUrl, clientIp(req)), bots);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   res.on("close", () => {
     void transport.close();
@@ -100,6 +105,6 @@ if (process.argv[1]?.endsWith("server.js")) {
     process.exit(1);
   }
   createServer((req, res) => void handle(req, res)).listen(PORT, "0.0.0.0", () =>
-    console.log(`lp-mcp listening on :${PORT}, ${TOOLS.length} read-only tools, api ${API_URL}`),
+    console.log(`lp-mcp listening on :${PORT}, ${TOOLS.length} tools, api ${API_URL}`),
   );
 }
