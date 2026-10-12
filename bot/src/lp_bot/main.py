@@ -21,7 +21,7 @@ from . import analyze as AN
 from . import jupiter, store
 from .config import Settings, get_settings
 from .engine import SOFT_EXITS, TX_SOL, Position
-from .guards import calm_entry, entry_guard, exit_warning, portfolio_pause
+from .guards import DayRules, calm_entry, day_guard, entry_guard, exit_warning, portfolio_pause
 from .live import Live
 from .strategies import BY_NAME, SELL_COST_ESTIMATE, Strategy
 
@@ -36,6 +36,7 @@ ANALYZE_EVERY_S = 300
 ALL: dict[str, Strategy] = {**BY_NAME, AN.Auto.name: AN.Auto()}
 _RT: dict[str, tuple[float, tuple[float, float] | None]] = {}   # pool -> (when, round trip quote), 10 min
 PAUSED: dict[str, str | None] = {"reason": None}
+DAY: dict[str, tuple[str | None, bool]] = {}     # strategy -> (stop reason, close the open ones): guards.day_guard
 _SKIP: dict[str, float] = {}                     # mint -> until: too expensive to buy, re-quote after 30 min
 
 
@@ -79,6 +80,19 @@ async def live_bins(client: httpx.AsyncClient, cfg: Settings, pool: str) -> list
     except httpx.HTTPError as e:
         log.debug("live bins %s: %s", pool, e)
     return None
+
+
+async def day_guards(db: Any, cfg: Settings, names: list[str]) -> None:
+    rules = DayRules(cfg.day_target_usd, cfg.day_lock_min_peak_usd, cfg.day_lock_giveback, cfg.streak_losses,
+                     cfg.streak_pause_h)
+    res = await store.day_results(db)
+    for n in names:
+        r = res.get(n, {"today": [], "open_usd": 0.0, "recent": []})
+        why, close = day_guard(r["today"], r["open_usd"], r["recent"], time.time(), rules)
+        if why and DAY.get(n, (None, False))[0] is None:
+            log.info("%s stops for now: %s", n, why)
+            await store.event(db, n, None, "day_guard", {"why": why, "close_open": close})
+        DAY[n] = (why, close)
 
 
 async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: float, live: Live) -> int:
@@ -125,6 +139,8 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
                 reason = "data_gap"                         # we were blind > 10 min: close at the first price back
             if reason:
                 break
+        if not reason and DAY.get(p.strategy, (None, False))[1] and not p.info.get("unwind"):
+            reason = "profit_lock"                          # the day is made (or protected): close what is open
         if reason in SOFT_EXITS and rules.unwind and not p.info.get("unwind") \
                 and p.start_unwind(p.last_price, rules, reason):
             log.info("unwind %s %s after %s", p.strategy, p.name, reason)
@@ -174,6 +190,8 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
     opened = 0
     capital_sol = cfg.position_usd / sol_usd
     for s in strategies:
+        if DAY.get(s.name, (None, False))[0]:
+            continue
         mine = [p for p in open_ if p.strategy == s.name]
         slots = cfg.max_open_per_strategy - len(mine)
         if slots <= 0:
@@ -298,6 +316,8 @@ async def run_async() -> None:
             sol = await store.sol_usd(db)
             if sol <= 0:
                 raise RuntimeError("no SOL price")
+            await day_guards(db, cfg, [st.name for st in strategies])
+            status["day_guard"] = {k: v[0] for k, v in DAY.items() if v[0]}
             status["live"] = await live.tick()
             status["closed"] = await step_open(db, client, cfg, sol, live)
             status["opened"] = await open_new(db, client, cfg, strategies, sol, live)

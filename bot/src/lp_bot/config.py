@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     min_tvl: float = 10_000
     min_fees_1h: float = 300
     daily_loss_limit_usd: float = 25.0    # no new entries for the rest of the UTC day below this
+    day_target_usd: float = 30.0         # per strategy: stop for the day and close (profit kept)
+    day_lock_min_peak_usd: float = 10.0  # profit lock: once the day was up this much ...
+    day_lock_giveback: float = 0.4       # ... stop and close when it gives back this fraction of the peak
+    streak_losses: int = 3               # losses in a row ...
+    streak_pause_h: float = 6.0          # ... pause new entries this long
     min_token_age_h: float = 24          # crash_study: tokens < 24 h crash ~240x more often and 6x faster
     live_bins_each_side: int = 70
     # live trading: mirrors one paper strategy with real, small positions (executor holds the key)

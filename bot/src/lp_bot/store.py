@@ -216,6 +216,26 @@ async def closed_mints(db: asyncpg.Pool, minutes_: int) -> set[str]:
     return {r["mint"] for r in rows if r["mint"]}
 
 
+async def day_results(db: asyncpg.Pool) -> dict[str, dict[str, Any]]:
+    """Per strategy: today's (UTC) closed P&L in close order, the open P&L now, the latest 5 closed (ts, P&L)."""
+    out: dict[str, dict[str, Any]] = {}
+    for r in await db.fetch(
+            "SELECT strategy, COALESCE(array_agg(pnl_usd ORDER BY closed_at, id) FILTER (WHERE status = 'closed' AND "
+            "closed_at >= date_trunc('day', now())), '{}') AS today, "
+            "COALESCE(sum(pnl_usd) FILTER (WHERE status = 'open'), 0) AS open_usd FROM bot_positions "
+            "WHERE status = 'open' OR closed_at >= now() - interval '2 days' GROUP BY strategy"):
+        out[r["strategy"]] = {"today": [float(x or 0) for x in r["today"]], "open_usd": float(r["open_usd"]),
+                              "recent": []}
+    for r in await db.fetch(
+            "SELECT strategy, extract(epoch FROM closed_at)::float t, pnl_usd FROM ("
+            "SELECT strategy, closed_at, pnl_usd, "
+            "row_number() OVER (PARTITION BY strategy ORDER BY closed_at DESC) n FROM bot_positions "
+            "WHERE status = 'closed') x WHERE n <= 5 ORDER BY strategy, t DESC"):
+        out.setdefault(r["strategy"], {"today": [], "open_usd": 0.0, "recent": []})["recent"].append(
+            (r["t"], float(r["pnl_usd"] or 0)))
+    return out
+
+
 async def losing_mints(db: asyncpg.Pool, hours: float) -> set[str]:
     """Tokens a position closed at a loss within `hours` (DARK 2026-10-12 05:18 re-entered after a loss: -4.6%)."""
     rows = await db.fetch("SELECT DISTINCT state->'info'->>'mint' AS mint FROM bot_positions WHERE status = 'closed' "

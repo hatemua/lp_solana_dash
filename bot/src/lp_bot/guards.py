@@ -84,3 +84,35 @@ def portfolio_pause(day_pnl_usd: float, loss_limit_usd: float, sol_chg1h_pct: fl
     if sol_chg1h_pct is not None and sol_chg1h_pct <= -4:
         return f"SOL dumping ({sol_chg1h_pct:.1f}% in 1 h)"
     return None
+
+
+@dataclass
+class DayRules:
+    target_usd: float = 30.0          # day's result per strategy at which we stop and close: the day is made
+    lock_min_peak_usd: float = 10.0   # the profit lock starts once the day was up this much
+    lock_giveback: float = 0.4        # stop when the day falls this fraction below its peak (+$41 -> stop at +$24.6)
+    streak: int = 3                   # this many losses in a row ...
+    streak_pause_h: float = 6.0       # ... pause new entries this long (the market is dumping)
+
+
+def day_guard(closed_today: list[float], open_usd: float, recent: list[tuple[float, float]], now: float,
+              r: DayRules) -> tuple[str | None, bool]:
+    """(reason to stop new entries, close the open positions too) for one strategy.
+
+    closed_today: today's closed P&L (USD) in close order; open_usd: open positions' P&L now;
+    recent: (close time, P&L) of the latest closed positions, newest first.
+    Auto 2026-10-12: up +$41.24 at 03:25 UTC, gave it back to +$8.95 by 12:45 with no rule to keep it.
+    """
+    cum, peak = 0.0, 0.0
+    for pnl in closed_today:
+        cum += pnl
+        peak = max(peak, cum)
+    day = cum + open_usd
+    if day >= r.target_usd:
+        return f"day target reached (${day:+.2f} >= ${r.target_usd:.0f}): profit kept", True
+    if peak >= r.lock_min_peak_usd and day <= peak * (1 - r.lock_giveback):
+        return f"profit lock: day ${day:+.2f}, peak ${peak:+.2f} (gave back {1 - day / peak:.0%})", True
+    last = recent[: r.streak]
+    if len(last) == r.streak and all(p < 0 for _, p in last) and now - last[0][0] < r.streak_pause_h * 3600:
+        return f"{r.streak} losses in a row: paused until {r.streak_pause_h:.0f} h after the last one", False
+    return None, False

@@ -9,7 +9,8 @@ from .strategies import ExitRules
 
 TX_SOL = 0.0002                 # per on-chain action (open, close, flip), incl. priority fee
 LP_SHARE = 0.95                 # DLMM pools keep ~5% of swap fees as protocol fee
-SOFT_EXITS = ("take_profit", "trailing", "fee_death", "time")     # no danger: sell through the pool, not a swap
+# no danger: sell through the pool, not a swap
+SOFT_EXITS = ("take_profit", "trailing", "fee_death", "time", "profit_lock")
 
 
 @dataclass

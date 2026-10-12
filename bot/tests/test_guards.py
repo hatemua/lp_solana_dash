@@ -59,3 +59,25 @@ def test_calm_entry_has_a_margin_below_the_exit_warnings() -> None:
     assert calm_entry(TokenFlow(chg5m_pct=0.5, chg1h_pct=2, buy5m=3000, sell5m=2500)) == []
     assert "falling_5m" in calm_entry(TokenFlow(chg5m_pct=-4, buy5m=3000, sell5m=2000))
     assert "sellers_ahead" in calm_entry(TokenFlow(chg5m_pct=0, buy5m=1000, sell5m=1900))   # passed the old guard
+
+
+def test_day_guard_on_autos_real_day() -> None:
+    from lp_bot.guards import DayRules, day_guard
+    r = DayRules()
+    # Auto 2026-10-12 closes (USD): +9.08 +12.82 +0.81 -6.97 -4.58 +9.66 -11.42 ... peak +22.71 today
+    day = [9.08, 12.82, 0.81, -6.97, -4.58, 9.66, -11.42]
+    why, close = day_guard(day[:3], 0.0, [], 0, r)
+    assert why is None
+    why, close = day_guard(day, 0.0, [], 0, r)                     # 9.40 <= 22.71 * 0.6
+    assert why and why.startswith("profit lock") and close
+
+
+def test_day_guard_target_and_streak() -> None:
+    from lp_bot.guards import DayRules, day_guard
+    r = DayRules(target_usd=30)
+    assert day_guard([20.0], 12.0, [], 0, r) == (day_guard([20.0], 12.0, [], 0, r)[0], True)
+    assert "target" in (day_guard([20.0], 12.0, [], 0, r)[0] or "")
+    recent = [(1000.0, -1.0), (900.0, -5.0), (800.0, -0.3)]
+    why, close = day_guard([], 0.0, recent, 1000 + 3600, r)
+    assert why and "in a row" in why and not close
+    assert day_guard([], 0.0, recent, 1000 + 7 * 3600, r) == (None, False)   # pause over after 6 h

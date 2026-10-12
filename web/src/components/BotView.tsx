@@ -27,7 +27,8 @@ interface Status {
   position_usd: number;
   max_open_per_strategy: number;
   alive: boolean;
-  heartbeat: { ts: number; ok?: boolean; error?: string; took_s?: number; paused?: string | null } | null;
+  heartbeat: { ts: number; ok?: boolean; error?: string; took_s?: number; paused?: string | null;
+    day_guard?: Record<string, string> } | null;
   strategies: StrategyStats[];
   note: string;
 }
@@ -151,6 +152,11 @@ export function BotView() {
               <span className="font-semibold">{s.label}</span>
               <span className="ml-auto text-xs text-mut">{s.open} open</span>
             </div>
+            {status?.heartbeat?.day_guard?.[s.strategy] && (
+              <div className="mb-1 rounded bg-yellow-500/10 px-2 py-1 text-xs text-yellow-400">
+                stopped: {status.heartbeat.day_guard[s.strategy]}
+              </div>
+            )}
             <div className={`text-2xl font-semibold ${color(s.realized_usd + s.unrealized_usd)}`}>
               {usd(s.realized_usd + s.unrealized_usd, 2)}
             </div>
