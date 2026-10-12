@@ -1,4 +1,5 @@
-"""Settings from the environment. The bot is paper-only: it has no wallet, no keys and sends no transactions."""
+"""Settings from the environment. The paper bot has no wallet. The live part (live.py) is off unless BOT_LIVE=true;
+its wallet key is held by the executor only, never by this service."""
 
 from functools import lru_cache
 
@@ -24,6 +25,14 @@ class Settings(BaseSettings):
     daily_loss_limit_usd: float = 25.0    # no new entries for the rest of the UTC day below this
     min_token_age_h: float = 24          # crash_study: tokens < 24 h crash ~240x more often and 6x faster
     live_bins_each_side: int = 70
+    # live trading: mirrors one paper strategy with real, small positions (executor holds the key)
+    bot_live: bool = False
+    live_strategy: str = "auto"
+    live_position_sol: float = 0.1
+    live_max_open: int = 1
+    live_daily_loss_sol: float = 0.05    # pause live entries for the UTC day below this
+    live_reserve_sol: float = 0.05       # always kept for fees and position rent
+    live_shapes: str = "spot_10,spot_25,spot_40"
     log_level: str = "INFO"
 
     @property

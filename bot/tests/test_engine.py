@@ -138,3 +138,14 @@ def test_unwind_times_out() -> None:
     p.step_minute(60, 1.0, 0.0, SOL_USD, nobody, rules)
     assert p.start_unwind(1.0, rules, "time")
     assert p.step_minute(60 + 61 * 60, 1.0, 0.0, SOL_USD, nobody, rules) == "unwind_timeout"
+
+
+def test_unwind_cuts_a_falling_token() -> None:
+    from lp_bot.sim import spot_two_sided
+    p = Position(strategy="v2_wide", pool="P", name="T-SOL", opened_at=0, entry_price=1.0, capital_sol=1.0,
+                 step=STEP, sell_cost=0.03, legs=[Leg("S", spot_two_sided(1.0, 25, STEP, 0.5, 0.5))], last_price=1.0)
+    rules = ExitRules(unwind=True, unwind_max_min=60, unwind_cut=0.05, stop=-50)
+    p.step_minute(60, 1.0, 0.0, SOL_USD, nobody, rules)
+    assert p.start_unwind(1.0, rules, "time")
+    assert p.step_minute(600, 0.97, 0.0, SOL_USD, nobody, rules) is None       # slow fall: no fast_drop
+    assert p.step_minute(1200, 0.94, 0.0, SOL_USD, nobody, rules) == "unwind_falling"

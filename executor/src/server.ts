@@ -1,12 +1,13 @@
 /**
  * Executor: the only service that talks to the Meteora DLMM SDK. Listens on the internal network only.
  * Reads pool bins and wallet positions, and builds UNSIGNED LP transactions for the user's own wallet to sign.
- * It holds no user or bot key (see wallet.ts).
+ * It holds no user key (see wallet.ts). The live bot's own wallet, when configured, lives in bot.ts.
  */
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { serializeBins, SdkBin } from "./bins.js";
+import * as Bot from "./bot.js";
 import { addLiquidity, claimFees, decimalsOf as decimalsOfToken, HttpError, quote, removeLiquidity,
   sendSigned, userPositions } from "./wallet.js";
 
@@ -106,6 +107,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return send(res, 200, await quote(connection, dlmm, Number(url.searchParams.get("min_bin_id")),
         Number(url.searchParams.get("max_bin_id"))));
     }
+    if (url.pathname === "/v1/bot/wallet" && req.method === "GET") return send(res, 200, await Bot.wallet(connection));
+    if (req.method === "GET" && url.pathname === "/v1/bot/positions") {
+      const w = await Bot.wallet(connection);
+      return send(res, 200, w.address ? await userPositions(connection, DLMM, w.address) : { positions: [] });
+    }
+    if (req.method === "POST" && url.pathname === "/v1/bot/fund-tx") {
+      return send(res, 200, await Bot.fundTx(connection, await readJson(req) as never));
+    }
+    if (req.method === "POST" && url.pathname === "/v1/bot/withdraw") {
+      return send(res, 200, await Bot.withdraw(connection, await readJson(req) as never));
+    }
+    if (req.method === "POST" && url.pathname === "/v1/bot/verify") {
+      return send(res, 200, Bot.verifyOwner(await readJson(req) as never));
+    }
+    const botM = url.pathname.match(new RegExp(`^/v1/bot/pools/(${B58})/(open|unwind|close)$`));
+    if (req.method === "POST" && botM) {
+      const body = await readJson(req) as never;
+      const dlmm = await getPool(botM[1]);
+      const fn = { open: Bot.open, unwind: Bot.unwind, close: Bot.close }[botM[2] as "open" | "unwind" | "close"];
+      return send(res, 200, await fn(connection, dlmm, body));
+    }
     if (req.method === "POST" && url.pathname === "/v1/tx/send") {
       return send(res, 200, await sendSigned(connection, await readJson(req) as never));
     }
@@ -145,6 +167,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
   return send(res, 404, { error: "not found" });
 }
+
+Bot.loadBotKey();
 
 createServer((req, res) => {
   handle(req, res).catch((e) => send(res, 500, { error: String(e).slice(0, 300) }));

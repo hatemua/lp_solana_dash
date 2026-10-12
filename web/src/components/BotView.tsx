@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { pct, plainPct, price, usd } from "@/lib/format";
+import { LiveBot } from "./LiveBot";
 
 interface StrategyStats {
   strategy: string;
@@ -118,9 +119,10 @@ export function BotView() {
 
   return (
     <div className="space-y-4">
+      <LiveBot />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">Paper LP bot</h1>
-        <span className="rounded border border-line px-2 py-0.5 text-xs text-mut">PAPER · no wallet · no real orders</span>
+        <span className="rounded border border-line px-2 py-0.5 text-xs text-mut">PAPER · virtual positions</span>
         {status && (
           <span className={`text-xs ${status.alive ? "text-pos" : "text-neg"}`}>
             {status.alive ? "● running" : "● stopped"}

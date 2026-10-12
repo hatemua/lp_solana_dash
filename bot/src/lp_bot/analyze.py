@@ -24,6 +24,7 @@ from .sim import Leg, even_bids_below, spot_two_sided
 from .strategies import SELL_COST_ESTIMATE, V2_EXITS, Candidate, ExitRules, Plan, Strategy, V2BidFlip, V2Calm, V2Wide
 
 MIN_EDGE = 1.0              # % per position after all costs
+MAX_EDGE = 15.0      # BORDR 2026-10-12: replays said +62%, the trade lost 7% (a pump, not an edge)
 MAX_ROUND_TRIP = 0.03
 PRICE_GAP = (-0.03, 0.04)
 LOOKBACK_H = 6
@@ -177,6 +178,8 @@ def choose(shapes: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[st
         st = s["stats"]
         if st.get("n", 0) < 4:
             why_not.append(f"{s['label']}: not enough history ({st.get('n', 0)} replays)")
+        elif st["mean_pct"] > MAX_EDGE:
+            why_not.append(f"{s['label']}: replays +{st['mean_pct']:.0f}% look like a pump, not repeatable")
         elif st["mean_pct"] < MIN_EDGE:
             why_not.append(f"{s['label']}: avg {st['mean_pct']:+.1f}% < +{MIN_EDGE:.0f}% after costs")
         elif st["lower_pct"] <= 0:
@@ -199,7 +202,7 @@ def assess(c: Candidate, rt: tuple[float, float] | None, quoted: bool, blacklist
     reg, falling = regime(c)
     vetoes = token_vetoes(c) + falling
     if blacklisted:
-        vetoes.append("crashed on the bot in the last 24 h (the bot won't re-enter it)")
+        vetoes.append("crashed or lost money on the bot recently (the bot won't re-enter it yet)")
     if quoted and rt is None:
         vetoes.append("no Jupiter quote (can't price the swap)")
     elif rt is not None:

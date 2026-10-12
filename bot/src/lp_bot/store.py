@@ -28,6 +28,14 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS pool_analysis (
         pool text PRIMARY KEY, at timestamptz NOT NULL, name text, choice text, expected_pct double precision,
         data jsonb NOT NULL)""",
+    # live bot: one row per real position, linked to the paper position it mirrors
+    """CREATE TABLE IF NOT EXISTS live_positions (
+        id bigserial PRIMARY KEY, paper_id bigint NOT NULL, strategy text NOT NULL, pool text NOT NULL, name text,
+        mint text, status text NOT NULL, opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz,
+        sol_size double precision, position text, unwind_position text, sol_flow double precision NOT NULL DEFAULT 0,
+        pnl_sol double precision, exit_reason text, txs jsonb NOT NULL DEFAULT '[]', error text)""",
+    "CREATE INDEX IF NOT EXISTS live_positions_status ON live_positions (status)",
+    "CREATE TABLE IF NOT EXISTS bot_control (key text PRIMARY KEY, value jsonb NOT NULL, at timestamptz DEFAULT now())",
 ]
 
 
@@ -205,6 +213,13 @@ async def closed_mints(db: asyncpg.Pool, minutes_: int) -> set[str]:
     """Tokens any strategy closed within the last `minutes_` (no quick re-entry: QI 2026-10-11 00:21 lost $6.91)."""
     rows = await db.fetch("SELECT DISTINCT state->'info'->>'mint' AS mint FROM bot_positions WHERE status = 'closed' "
                           "AND closed_at > now() - make_interval(mins => $1)", minutes_)
+    return {r["mint"] for r in rows if r["mint"]}
+
+
+async def losing_mints(db: asyncpg.Pool, hours: float) -> set[str]:
+    """Tokens a position closed at a loss within `hours` (DARK 2026-10-12 05:18 re-entered after a loss: -4.6%)."""
+    rows = await db.fetch("SELECT DISTINCT state->'info'->>'mint' AS mint FROM bot_positions WHERE status = 'closed' "
+                          "AND net_pct < 0 AND closed_at > now() - make_interval(secs => $1)", hours * 3600)
     return {r["mint"] for r in rows if r["mint"]}
 
 

@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from . import auth
+from . import live as LIVE
 from . import memes as MEMES
 from . import signals as S
 from .config import Settings, get_settings
@@ -104,7 +105,8 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
         path = request.url.path
         if "limiter" in state and (path in AUTH_PATHS or (path.startswith("/v1/") and path != "/v1/stream")):
             limiter = (state["auth_limiter"] if path in AUTH_PATHS
-                       else state["tx_limiter"] if path.startswith("/v1/tx/") else state["limiter"])
+                       else state["tx_limiter"] if path.startswith("/v1/tx/")
+                       or (path.startswith("/v1/live/") and request.method == "POST") else state["limiter"])
             ok, retry = await limiter.hit(client_ip(request))
             if not ok:
                 return JSONResponse({"error": "rate limit exceeded"}, status_code=429,
@@ -128,6 +130,7 @@ def create_app(cfg: Settings | None = None) -> FastAPI:
 
     app.include_router(auth.router(cfg, state))
     app.include_router(PAPER.router(cfg, state))
+    app.include_router(LIVE.router(state, rows, executor))
 
     # ------------------------------------------------------------------ health
     @app.get("/health")

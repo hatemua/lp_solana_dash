@@ -1,7 +1,8 @@
 """Paper LP bot: every minute, step the open virtual positions on real pool data and open new ones.
 
-No wallet, no keys, no transactions: positions exist only in the bot_positions table. Prices, fees and the other
-LPs' liquidity come from the indexer tables and the executor's read-only bins endpoint.
+Paper positions exist only in the bot_positions table. Prices, fees and the other LPs' liquidity come from the indexer
+tables and the executor's read-only bins endpoint. With BOT_LIVE=true, live.py mirrors one strategy with small real
+positions through the executor (which alone holds the bot wallet key).
 """
 
 import asyncio
@@ -21,6 +22,7 @@ from . import jupiter, store
 from .config import Settings, get_settings
 from .engine import SOFT_EXITS, TX_SOL, Position
 from .guards import calm_entry, entry_guard, exit_warning, portfolio_pause
+from .live import Live
 from .strategies import BY_NAME, SELL_COST_ESTIMATE, Strategy
 
 log = logging.getLogger("lp_bot")
@@ -29,6 +31,7 @@ MAX_ENTRY_SWAP_COST = 0.02
 MAX_ROUND_TRIP = 0.03            # careful entries: buy + sell back, real quotes
 PRICE_GAP = (-0.03, 0.04)        # Jupiter fill price vs pool price (the buy fee alone is ~+1%)
 REENTRY_BLOCK_MIN = 120
+LOSS_BLOCK_H = 6                 # a token that just lost money is not re-entered for 6 h
 ANALYZE_EVERY_S = 300
 ALL: dict[str, Strategy] = {**BY_NAME, AN.Auto.name: AN.Auto()}
 _RT: dict[str, tuple[float, tuple[float, float] | None]] = {}   # pool -> (when, round trip quote), 10 min
@@ -78,7 +81,7 @@ async def live_bins(client: httpx.AsyncClient, cfg: Settings, pool: str) -> list
     return None
 
 
-async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: float) -> int:
+async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: float, live: Live) -> int:
     positions = await store.open_positions(db)
     if not positions:
         return 0
@@ -127,6 +130,7 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
             log.info("unwind %s %s after %s", p.strategy, p.name, reason)
             await store.event(db, p.strategy, p.id, "unwind", {"reason": reason,
                                                                "net_pct": round(p.net_pct(p.last_price), 3)})
+            live.on_paper_unwind(p)
             reason = None
         if reason:
             toks = p.tokens(p.last_price)
@@ -136,6 +140,7 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
                 p.info["exit_swap_cost_pct"] = round(p.sell_cost * 100, 3)
             net = p.close(p.last_price)
             await store.close(db, p, reason, net, sol_usd)
+            live.on_paper_close(p, reason)
             log.info("close %s %s %s net %+.2f%% fees $%.2f", p.strategy, p.name, reason, net, p.fees_sol * sol_usd)
             closed += 1
         else:
@@ -144,7 +149,7 @@ async def step_open(db: Any, client: httpx.AsyncClient, cfg: Settings, sol_usd: 
 
 
 async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies: list[Strategy],
-                   sol_usd: float) -> int:
+                   sol_usd: float, live: Live) -> int:
     cands = [c for c in await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h)
              if c.token_age_h is not None and c.token_age_h >= cfg.min_token_age_h]
     if not cands:
@@ -165,7 +170,7 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
             guarded.append(c)
     cands = guarded
     open_ = await store.open_positions(db)
-    recent = await store.closed_mints(db, REENTRY_BLOCK_MIN)
+    recent = await store.closed_mints(db, REENTRY_BLOCK_MIN) | await store.losing_mints(db, LOSS_BLOCK_H)
     opened = 0
     capital_sol = cfg.position_usd / sol_usd
     for s in strategies:
@@ -216,6 +221,7 @@ async def open_new(db: Any, client: httpx.AsyncClient, cfg: Settings, strategies
                          last_ts=time.time(), last_price=c.price, info=info)
             p.id = await store.insert(db, p, cfg.position_usd, sol_usd)
             log.info("open %s %s at %.3g (%s)", s.name, c.name, c.price, json.dumps(p.info, default=str)[:200])
+            live.on_paper_open(p)
             slots -= 1
             opened += 1
             taken_tokens.add(c.name.split("-")[0])
@@ -230,7 +236,7 @@ async def analyze_pools(db: Any, client: httpx.AsyncClient, cfg: Settings) -> tu
         return 0, 0
     capital_sol = cfg.position_usd / sol
     done = chosen = 0
-    black = await store.blacklisted_mints(db)          # same 24 h block as the entries
+    black = await store.blacklisted_mints(db) | await store.losing_mints(db, LOSS_BLOCK_H)   # same blocks as entries
     for c in await store.candidates(db, cfg.min_tvl, cfg.min_fees_1h):
         banned = c.mint in black
         quoted = not AN.token_vetoes(c) and not banned  # don't spend quotes on tokens we won't enter
@@ -269,7 +275,7 @@ async def analyze_loop(db: Any, client: httpx.AsyncClient, cfg: Settings) -> Non
 async def run_async() -> None:
     cfg = get_settings()
     if cfg.bot_mode != "paper":
-        raise SystemExit("BOT_MODE must be 'paper': live trading is not enabled in this build")
+        raise SystemExit("BOT_MODE must be 'paper' (real trading is BOT_LIVE=true, on top of the paper bot)")
     strategies = [ALL[n] for n in cfg.strategy_names]
     db = await store.connect(cfg.database_url)
     redis = Redis.from_url(cfg.redis_url, decode_responses=True)
@@ -279,6 +285,11 @@ async def run_async() -> None:
     await store.event(db, None, None, "start", {"strategies": [s.name for s in strategies],
                                                 "position_usd": cfg.position_usd})
     analyzer = asyncio.create_task(analyze_loop(db, client, cfg))
+    live = Live(cfg, db, client)
+    if live.on:
+        await live.recover()
+        log.info("LIVE trading on: %s, %.3f SOL per position, max %d open", cfg.live_strategy,
+                 cfg.live_position_sol, cfg.live_max_open)
     while True:
         t0 = time.time()
         status: dict[str, Any] = {"ts": t0, "mode": "paper", "strategies": [s.name for s in strategies],
@@ -287,8 +298,9 @@ async def run_async() -> None:
             sol = await store.sol_usd(db)
             if sol <= 0:
                 raise RuntimeError("no SOL price")
-            status["closed"] = await step_open(db, client, cfg, sol)
-            status["opened"] = await open_new(db, client, cfg, strategies, sol)
+            status["live"] = await live.tick()
+            status["closed"] = await step_open(db, client, cfg, sol, live)
+            status["opened"] = await open_new(db, client, cfg, strategies, sol, live)
             status["ok"] = True
             status["paused"] = PAUSED["reason"]
         except Exception as e:                      # keep running; the error is visible in the heartbeat

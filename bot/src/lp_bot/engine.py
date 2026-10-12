@@ -156,6 +156,8 @@ class Position:
             return "unwound"
         if net <= rules.stop:
             return "stop"
+        if price < self.info["unwind"]["price"] * (1 - rules.unwind_cut):
+            return "unwind_falling"                        # nobody is buying: sell the rest before it falls further
         if ts - self.info["unwind"]["ts"] >= rules.unwind_max_min * 60:
             return "unwind_timeout"                        # the rest is swapped back at the real quote
         return None

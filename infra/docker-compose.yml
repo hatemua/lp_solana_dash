@@ -39,6 +39,9 @@ services:
       EXECUTOR_PORT: 8200
       RPC_URL: ${RPC_URL:-}
       RPC_BACKUP_URL: ${RPC_BACKUP_URL:-}
+      # live bot wallet: the key exists only in the server .env and only this service gets it
+      BOT_WALLET_SECRET: ${BOT_WALLET_SECRET:-}
+      BOT_OWNER_WALLET: ${BOT_OWNER_WALLET:-}   # the only address the bot can withdraw to, and its controller
     networks: [internal]
 
   indexer:
@@ -114,7 +117,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-lp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lp}
       REDIS_URL: redis://redis:6379/0
       EXECUTOR_URL: http://executor:8200
-      BOT_MODE: paper                # hard-coded: the bot has no wallet and no keys (no key file is mounted)
+      BOT_MODE: paper                # the paper bot always runs; it never gets the wallet key (the executor signs)
+      BOT_LIVE: ${BOT_LIVE:-false}   # real trades mirroring LIVE_STRATEGY, small and capped
+      LIVE_STRATEGY: ${LIVE_STRATEGY:-auto}
+      LIVE_POSITION_SOL: ${LIVE_POSITION_SOL:-0.1}
+      LIVE_MAX_OPEN: ${LIVE_MAX_OPEN:-1}
+      LIVE_DAILY_LOSS_SOL: ${LIVE_DAILY_LOSS_SOL:-0.05}
       STRATEGIES: ${BOT_STRATEGIES:-v2_wide,v2_calm,v2_bid_flip,auto}
       POSITION_USD: ${BOT_POSITION_USD:-100}
       MAX_OPEN_PER_STRATEGY: ${BOT_MAX_OPEN:-3}

@@ -19,3 +19,9 @@ def test_choose_takes_the_best_worst_case_and_skips_weak_edges() -> None:
 def test_every_regime_maps_to_known_shapes_and_falling_to_none() -> None:
     assert FIT["falling"] == []
     assert all(k in BY_KEY for keys in FIT.values() for k in keys)
+
+
+def test_choose_skips_pump_replays() -> None:
+    from lp_bot.analyze import choose
+    best, why = choose([shape("spot_40", True, 10, 62.0, 40.0, 0.9)])
+    assert best is None and "pump" in why[0]

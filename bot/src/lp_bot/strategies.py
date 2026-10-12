@@ -100,6 +100,7 @@ class ExitRules:
     unwind: bool = False               # soft exits sell the tokens through the pool (ask bins), not with a swap
     unwind_bins: int = 5
     unwind_max_min: int = 60
+    unwind_cut: float = 0.05             # CRAWL 2026-10-12: held to the timeout while falling, -11.4%
     confirm_warnings: bool = False     # sell_pressure / dumping must show on 2 ticks in a row and not in the first
     warn_min_age_min: int = 10         # minutes (fast drop, rug and stop still exit at once)
 
